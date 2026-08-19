@@ -23,9 +23,8 @@ import { analyzePlaceProfile } from '../server/scoring/analyze'
 import type { PlaceProfileSummary } from '../server/scoring/types'
 import type { LeadDoc } from '../server/leads/models'
 import { loadSettings, settings, updateSettings } from '../server/settings/settings'
-import { invalidateTemplates, resolveTemplate, seedBuiltinTemplates } from '../server/email/template-store'
+import { invalidateTemplates, resolveTemplate } from '../server/email/template-store'
 import { EmailTemplate } from '../server/email/template-models'
-import { AGENCY_CATEGORIES } from '../server/email/audience'
 
 const summary: PlaceProfileSummary = {
   name: 'Padaria IT Central', address: 'Rua Teste, 1', phone: '+55 71 3333-3333',
@@ -45,8 +44,31 @@ async function main() {
   assert.equal(settings().email.mode, 'dry_run', 'refusing to run with a live transport')
   // The "landing store" for this run is the isolated database itself — the
   // same local-dev fallback the app uses when no landing URI is configured.
-  await updateSettings({ landing: { db_name: mongoose.connection.name } })
-  await seedBuiltinTemplates()
+  await updateSettings({
+    landing: { db_name: mongoose.connection.name },
+    // Tracked links point at the operator's own site; with none configured an
+    // email ships without a landing link at all.
+    offer: { site_url: 'https://acme.example', brand_name: 'Acme' },
+  })
+  // A library with one template: this run sends what a real install sends.
+  await EmailTemplate.create({
+    name: 'IT generic',
+    audience: 'business',
+    categories: [],
+    language: 'pt',
+    findings: { no_hours: 'não tem horário cadastrado', few_photos: 'só {{count}} fotos' },
+    messages: [0, 1, 2].map((followup) => ({
+      followup,
+      variants: [
+        {
+          subject: `passo ${followup} — {{business_name}}`,
+          html: `<p>{{finding_1}} <a href="{{landing_url}}">{{brand_name}}</a></p>`,
+          text: `{{finding_1}}\n{{landing_url}}`,
+        },
+      ],
+    })),
+  })
+  invalidateTemplates()
   console.log('[it] connected to isolated db')
 
   const scoring = analyzePlaceProfile(summary)
@@ -66,21 +88,21 @@ async function main() {
     city_label: 'Porto, Portugal', country: 'PT', language: 'pt', market_scope: 'portuguese',
     score: 5, status: 'approved', approved_at: new Date('2026-08-01T12:00:00Z'),
     contact: { emails: [], selected_email: 'old@legacy.example' },
-    delivery: { state: 'sent', sent_at: new Date('2026-08-01T12:00:00Z'), style: 'note', followup: 0 },
+    delivery: { state: 'sent', sent_at: new Date('2026-08-01T12:00:00Z'), followup: 0 },
     outreach: { count: 1, last_sent_at: new Date('2026-08-01T12:00:00Z'), variants: [1] },
     discovery: { query: 'it', city_label: 'Porto, Portugal', discovered_at: new Date('2026-07-30T12:00:00Z') },
   })
 
   /* 1–2: initial tracked send (dry-run) */
-  const t1 = await beginTrackedSend({ lead, recipient: 'contato@padaria-it.example', style: 'note', followupNumber: 0 })
+  const t1 = await beginTrackedSend({ lead, recipient: 'contato@padaria-it.example', followupNumber: 0 })
   const rendered = renderForLead(lead, scoring, summary, 'pt', 'tok', {
-    style: 'note', followupNumber: 0, rid: t1.rid, campaign: t1.campaign,
+    followupNumber: 0, rid: t1.rid, campaign: t1.campaign, template: t1.template ?? undefined,
   })
   assert.ok(rendered.html.includes(`rid=${t1.rid}`), 'HTML carries the rid')
   assert.ok(rendered.text?.includes(`rid=${t1.rid}`), 'plain text carries the rid')
   assert.ok(rendered.html.includes('utm_source=cold_email') && rendered.html.includes('utm_term=attempt_1'))
   const outcome1 = await sendLeadEmail(lead, scoring, summary, 'contato@padaria-it.example', {
-    style: 'note', followupNumber: 0, rid: t1.rid, campaign: t1.campaign,
+    followupNumber: 0, rid: t1.rid, campaign: t1.campaign, template: t1.template ?? undefined,
   })
   assert.equal(outcome1.state, 'sent_dry_run')
   await completeTrackedSend(t1.sendId, outcome1)
@@ -95,7 +117,7 @@ async function main() {
   console.log('[it] send 1 tracked: hash persisted, rid only in the email ✓')
 
   /* Second send to the SAME lead (follow-up) — new rid/hash, no visit */
-  const t2 = await beginTrackedSend({ lead, recipient: 'contato@padaria-it.example', style: 'note', followupNumber: 1 })
+  const t2 = await beginTrackedSend({ lead, recipient: 'contato@padaria-it.example', followupNumber: 1 })
   assert.notEqual(t2.rid, t1.rid)
   const outcome2 = await sendLeadEmail(lead, scoring, summary, 'contato@padaria-it.example', {
     followupNumber: 1, usedVariants: [outcome1.subjectVariant], rid: t2.rid, campaign: t2.campaign,
@@ -180,31 +202,38 @@ async function main() {
   assert.equal((await getTrackingState()).last_sync_unattributed, 1)
   console.log('[it] unattributed cold-email visit reported separately ✓')
 
-  /* builtin targeting: the coded audience rule owns the row until the owner does */
+  /* resolution: a category-bound template beats the generic one */
   const agencyLead = { discovery: { search_category: 'Video production service' } }
-  await EmailTemplate.updateOne(
-    { kind: 'builtin', builtin_pack: 'agency_note' },
-    { $set: { categories: ['Marketing agency'] } },
-  )
-  invalidateTemplates()
-  assert.equal(
-    (await resolveTemplate(agencyLead, { language: 'en' })).audience,
-    'business',
-    'the narrowed row is what routing used to do',
-  )
-  await seedBuiltinTemplates()
-  const realigned = await EmailTemplate.findOne({ kind: 'builtin', builtin_pack: 'agency_note' }).lean()
-  assert.deepEqual([...realigned!.categories], [...AGENCY_CATEGORIES], 'seeding realigns an untouched builtin')
-  assert.equal((await resolveTemplate(agencyLead, { language: 'en' })).audience, 'agency', 'agency lead gets agency copy')
+  assert.equal((await resolveTemplate(agencyLead, { language: 'pt' }))?.name, 'IT generic', 'generic serves everyone')
 
-  await EmailTemplate.updateOne(
-    { kind: 'builtin', builtin_pack: 'agency_note' },
-    { $set: { categories: ['Marketing agency'], categories_customized: true } },
+  const bound = await EmailTemplate.create({
+    name: 'IT agencies',
+    audience: 'agency',
+    categories: ['Video production service'],
+    language: 'pt',
+    messages: [{ followup: 0, variants: [{ subject: 'agências', html: '<p>oi</p>' }] }],
+  })
+  invalidateTemplates()
+  assert.equal((await resolveTemplate(agencyLead, { language: 'pt' }))?.name, 'IT agencies', 'the bound one wins')
+  assert.equal(
+    (await resolveTemplate({ discovery: { search_category: 'Bakery' } }, { language: 'pt' }))?.name,
+    'IT generic',
+    'a lead outside the list still gets the generic template',
   )
-  await seedBuiltinTemplates()
-  const pinned = await EmailTemplate.findOne({ kind: 'builtin', builtin_pack: 'agency_note' }).lean()
-  assert.deepEqual([...pinned!.categories], ['Marketing agency'], "the owner's own targeting is never overwritten")
-  console.log('[it] builtin targeting: realigned when untouched, preserved when retargeted ✓')
+
+  // The bound template has no follow-up copy: a step without words is never
+  // chosen, so a follow-up can never go out empty.
+  assert.equal(
+    (await resolveTemplate(agencyLead, { language: 'pt', followupNumber: 1 }))?.name,
+    'IT generic',
+    'a step with no copy falls through to a template that has it',
+  )
+
+  await EmailTemplate.deleteMany({})
+  invalidateTemplates()
+  assert.equal(await resolveTemplate(agencyLead, { language: 'pt' }), null, 'an empty library resolves to nothing')
+  console.log('[it] template resolution: bound beats generic, empty library resolves to nothing ✓')
+  void bound
 
   await mongoose.connection.dropDatabase()
   await mongoose.disconnect()

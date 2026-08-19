@@ -315,16 +315,16 @@ export function SettingsPage() {
             <TemplatesTab
               library={library}
               catalog={catalog}
-              senderName={stored.email.from_name || 'Brandstash'}
-              senderEmail={stored.email.from_email || 'get@brandstash.ai'}
+              senderName={stored.email.from_name || ''}
+              senderEmail={stored.email.from_email || 'hello@your-company.com'}
               onChanged={loadLibrary}
             />
           ) : (
             <GenerateTab
               library={library}
               catalog={catalog}
-              senderName={stored.email.from_name || 'Brandstash'}
-              senderEmail={stored.email.from_email || 'get@brandstash.ai'}
+              senderName={stored.email.from_name || ''}
+              senderEmail={stored.email.from_email || 'hello@your-company.com'}
               onSaved={async () => {
                 await loadLibrary()
                 setTab('templates')
@@ -480,6 +480,15 @@ export function SettingsPage() {
                   onChange={(e) => set('discovery', 'leads_per_hour', Number(e.target.value))}
                 />
               </Field>
+              <Field label="Follow-ups per lead" hint="How many messages follow the initial email (1–5). Templates get one step each.">
+                <Input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={String(val('discovery', 'followup_steps') ?? '')}
+                  onChange={(e) => set('discovery', 'followup_steps', Number(e.target.value))}
+                />
+              </Field>
               <Field label="Follow-up after (days)" hint="Days after a send before the lead is due for its next touch.">
                 <Input
                   type="number"
@@ -513,7 +522,7 @@ export function SettingsPage() {
             <Field label="From — email">
               <Input
                 value={String(val('email', 'from_email') ?? '')}
-                placeholder="get@brandstash.ai"
+                placeholder="hello@your-company.com"
                 onChange={(e) => set('email', 'from_email', e.target.value)}
               />
             </Field>
@@ -545,6 +554,17 @@ export function SettingsPage() {
             <Input
               value={String(val('email', 'unsubscribe_base_url') ?? '')}
               onChange={(e) => set('email', 'unsubscribe_base_url', e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Footer"
+            hint="Added only when a template carries no unsubscribe link of its own. Yours to word — {{unsubscribe_url}} becomes the link. Left empty, the bare link is sent, because a way out is never optional."
+          >
+            <textarea
+              className="h-24 w-full rounded-lg border border-line bg-paper-2 px-2.5 py-2 text-[12.5px] leading-relaxed text-ink outline-none focus:border-line-2"
+              value={String(val('email', 'footer_html') ?? '')}
+              placeholder={'You received this because your business is listed publicly on Google. <a href="{{unsubscribe_url}}">Unsubscribe</a>'}
+              onChange={(e) => set('email', 'footer_html', e.target.value)}
             />
           </Field>
         </Card>

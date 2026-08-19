@@ -13,12 +13,13 @@ import {
 import { discoveryStatus, queueCounts } from '../discovery/engine'
 import { ALL_CATEGORIES } from '../discovery/categories'
 import { MARKETS, scopedMarket } from '../markets/markets'
-import { followupDueQuery, MAX_SENDS } from '../leads/followup'
-import { renderForLead, sendLeadEmail, isSuppressed, SuppressedRecipientError } from '../email/sender'
+import { followupDueQuery, maxSends } from '../leads/followup'
+import { renderForLead, sendLeadEmail, isSuppressed, SuppressedRecipientError, NoTemplateError } from '../email/sender'
+import { resolveTemplate, templateById, templateOptionsFor } from '../email/template-store'
 import { DeadRecipientError } from '../email/dead-addresses'
 import { beginTrackedSend, completeTrackedSend, failTrackedSend } from '../tracking/send-log'
 import { campaignFor } from '../tracking/landing-url'
-import type { EmailLanguage, EmailStyle, MarketScope } from '../../shared/types'
+import type { EmailLanguage, MarketScope } from '../../shared/types'
 import type { PlaceProfileSummary } from '../scoring/types'
 import type { RulesAnalysisResult } from '../scoring/analyze'
 
@@ -332,58 +333,171 @@ api.get('/leads/:id', async (req, res) => {
 /**
  * Preview any outreach email for a lead:
  *   ?lang=  — language override (default: the lead's market language)
- *   ?style= — note | dashboard (default: the lead's chosen style)
- *   ?followup= — 0 (initial) | 1 (bump) | 2 (breakup); follow-ups are notes
- * The note variant matches exactly what a send would pick (deterministic +
- * skips variants already used on this lead).
+ *   ?template= — id of the template to render (default: the resolved one)
+ *   ?followup= — 0 (initial) | 1..5 (follow-ups)
+ * The variant matches exactly what a send would pick (deterministic + skips
+ * variants already used on this lead).
  */
+/** A one-off body: HTML as written, or plain text wrapped so it renders. */
+function oneOffDraft(body: { subject?: string; html?: string; text?: string | null }): { subject: string; html: string; text: string | null } | null {
+  const subject = String(body.subject ?? '').trim()
+  const html = String(body.html ?? '').trim()
+  const text = body.text ? String(body.text) : null
+  if (!subject || (!html && !text)) return null
+  const escaped = (text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return {
+    subject,
+    html:
+      html ||
+      `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14.5px;line-height:1.65;white-space:pre-wrap;">${escaped}</div>`,
+    text,
+  }
+}
+
+/** The template pinned for a step, falling back to the sequence's own. */
+function chosenTemplateId(lead: { outreach?: { template_id?: string | null; step_templates?: Array<{ followup: number; template_id: string }> } }, followup: number): string | null {
+  const pinned = lead.outreach?.step_templates?.find((s) => s.followup === followup)
+  return pinned?.template_id ?? lead.outreach?.template_id ?? null
+}
+
 api.get('/leads/:id/email-preview', async (req, res) => {
   const found = await findLeadAnywhere(req.params.id)
   if (!found) return res.status(404).json({ error: 'lead not found' })
   const analysis = await AnalysisData.findById(found.doc.analysis_id).lean()
   if (!analysis) return res.status(404).json({ error: 'analysis not found' })
   const language = (req.query.lang as EmailLanguage) ?? (found.doc.language as EmailLanguage)
-  const styleParam = req.query.style as EmailStyle | undefined
-  const followup = Math.min(2, Math.max(0, Number(req.query.followup ?? 0) || 0)) as 0 | 1 | 2
+  const followup = Math.min(maxSends() - 1, Math.max(0, Number(req.query.followup ?? 0) || 0))
   const token = found.doc.delivery?.unsubscribe_token ?? 'preview'
+  const requested = String(req.query.template ?? '').trim()
+  const template = requested
+    ? await templateById(requested)
+    : await resolveTemplate(found.doc, {
+        language,
+        followupNumber: followup,
+        preferTemplateId: found.doc.outreach?.template_id ?? null,
+      })
+
+  try {
+    const rendered = renderForLead(
+      found.doc,
+      analysis.scoring as RulesAnalysisResult,
+      (analysis.summary as PlaceProfileSummary) ?? null,
+      language,
+      token,
+      {
+        template: template ?? undefined,
+        followupNumber: followup,
+        usedVariants: found.doc.outreach?.variants ?? [],
+        // Untracked landing links: a preview is nobody's send, so it must not
+        // book a cold-email visit the reconciliation can never match.
+        preview: true,
+        campaign: campaignFor(String(found.doc.market_scope)),
+      },
+    )
+    res.json({
+      subject: rendered.subject,
+      subject_variant: rendered.variant,
+      followup: rendered.followupNumber,
+      language,
+      html: rendered.html,
+      text: rendered.text,
+      template_id: template?.id ?? null,
+      template_name: rendered.templateName,
+    })
+  } catch (err) {
+    if (err instanceof NoTemplateError) return res.status(409).json({ error: err.message, no_template: true })
+    throw err
+  }
+})
+
+/**
+ * Preview a ONE-OFF email — copy written for this lead and not saved to the
+ * library. Same renderer, same tokens, same compliance as a stored template.
+ */
+api.post('/leads/:id/email-preview', async (req, res) => {
+  const found = await findLeadAnywhere(req.params.id)
+  if (!found) return res.status(404).json({ error: 'lead not found' })
+  const analysis = await AnalysisData.findById(found.doc.analysis_id).lean()
+  if (!analysis) return res.status(404).json({ error: 'analysis not found' })
+  const body = (req.body ?? {}) as { subject?: string; html?: string; text?: string | null }
+  const draft = oneOffDraft(body)
+  if (!draft) return res.status(400).json({ error: 'write a subject and a body first' })
+
+  const language = (found.doc.language as EmailLanguage) ?? 'en'
+  // A one-off borrows the finding phrases of the template this lead would have
+  // been sent, so {{finding_1}} speaks in the same voice instead of nothing.
+  const voice = await resolveTemplate(found.doc, { language, preferTemplateId: chosenTemplateId(found.doc, 0) })
   const rendered = renderForLead(
     found.doc,
     analysis.scoring as RulesAnalysisResult,
     (analysis.summary as PlaceProfileSummary) ?? null,
     language,
-    token,
+    found.doc.delivery?.unsubscribe_token ?? 'preview',
     {
-      style: styleParam ?? (found.doc.email_style as EmailStyle) ?? 'note',
-      followupNumber: followup,
-      usedVariants: found.doc.outreach?.variants ?? [],
-      // Untracked landing links: a preview is nobody's send, so it must not
-      // book a cold-email visit the reconciliation can never match.
+      oneOff: draft,
+      template: voice ?? undefined,
       preview: true,
       campaign: campaignFor(String(found.doc.market_scope)),
     },
   )
   res.json({
     subject: rendered.subject,
-    subject_variant: rendered.variant,
-    band: rendered.band,
-    style: rendered.style,
-    followup: rendered.followupNumber,
+    subject_variant: 0,
+    followup: 0,
     language,
     html: rendered.html,
     text: rendered.text,
+    template_id: null,
+    template_name: rendered.templateName,
   })
 })
 
-/** Choose the outreach format for a lead: personal note (default) or dashboard. */
-api.put('/leads/:id/email-style', async (req, res) => {
-  const style = String((req.body as { style?: string }).style ?? '')
-  if (style !== 'note' && style !== 'dashboard') {
-    return res.status(400).json({ error: "style must be 'note' or 'dashboard'" })
-  }
+/** Every template this lead may be sent with, the resolved one flagged. */
+api.get('/leads/:id/templates', async (req, res) => {
   const found = await findLeadAnywhere(req.params.id)
   if (!found) return res.status(404).json({ error: 'lead not found' })
-  found.doc.email_style = style
-  found.doc.audit_trail.push({ at: new Date(), event: 'email_style_changed', detail: style })
+  const followup = Math.min(maxSends() - 1, Math.max(0, Number(req.query.followup ?? 0) || 0))
+  const { suggestedId, templates } = await templateOptionsFor(found.doc, {
+    language: String(found.doc.language ?? 'en'),
+    followupNumber: followup,
+    preferTemplateId: found.doc.outreach?.template_id ?? null,
+  })
+  res.json({
+    suggested_id: suggestedId,
+    chosen_id: chosenTemplateId(found.doc, followup),
+    max_followups: maxSends() - 1,
+    templates: templates.map((t) => ({
+      id: String(t._id),
+      name: t.name,
+      language: t.language ?? null,
+      audience: t.audience ?? 'custom',
+      categories: t.categories ?? [],
+      steps: (t.messages ?? []).map((m) => m.followup),
+    })),
+  })
+})
+
+/**
+ * Pin the template for one step of this lead's sequence. The resolver only
+ * SUGGESTS; any template in the library may be chosen, category restrictions
+ * included — the restriction decides what comes up first, not what is allowed.
+ */
+api.put('/leads/:id/template', async (req, res) => {
+  const body = (req.body ?? {}) as { template_id?: string; followup?: number }
+  const templateId = String(body.template_id ?? '').trim()
+  const followup = Math.min(maxSends() - 1, Math.max(0, Number(body.followup ?? 0) || 0))
+  if (!templateId) return res.status(400).json({ error: 'template_id is required' })
+  if (!(await templateById(templateId))) return res.status(404).json({ error: 'template not found' })
+
+  const found = await findLeadAnywhere(req.params.id)
+  if (!found) return res.status(404).json({ error: 'lead not found' })
+  const steps = found.doc.outreach.step_templates ?? []
+  const existing = steps.find((s) => s.followup === followup)
+  if (existing) existing.template_id = templateId
+  else steps.push({ followup, template_id: templateId })
+  found.doc.outreach.step_templates = steps
+  if (followup === 0) found.doc.outreach.template_id = templateId
+  found.doc.audit_trail.push({ at: new Date(), event: 'template_chosen', detail: `step ${followup}: ${templateId}` })
   await found.doc.save()
   res.json({ ok: true })
 })
@@ -439,10 +553,32 @@ api.post('/leads/:id/approve', async (req, res) => {
   // Tracking contract: rid → sha256 → record persisted BEFORE the provider
   // is called; the raw rid only flows into the email build below and is
   // gone when this handler returns.
-  const style = (approvedDoc.email_style as EmailStyle) ?? 'note'
-  const tracked = await beginTrackedSend({ lead: approvedDoc as LeadDoc, recipient, style, followupNumber: 0 })
-  // The whole 3-touch sequence stays in this template's voice.
-  approvedDoc.outreach.template_id = tracked.template.id ?? null
+  const oneOff = oneOffDraft((req.body ?? {}) as { subject?: string; html?: string; text?: string | null })
+  const chosen = chosenTemplateId(approvedDoc, 0)
+  // With a one-off, the template is consulted only for its finding phrases.
+  const template = oneOff
+    ? await resolveTemplate(approvedDoc, {
+        language: String(approvedDoc.language ?? 'en'),
+        preferTemplateId: chosen,
+      })
+    : chosen
+      ? await templateById(chosen)
+      : null
+  let tracked
+  try {
+    tracked = await beginTrackedSend({
+      lead: approvedDoc as LeadDoc,
+      recipient,
+      followupNumber: 0,
+      template: template ?? undefined,
+      oneOff: Boolean(oneOff),
+    })
+  } catch (err) {
+    if (err instanceof NoTemplateError) return res.status(409).json({ error: err.message, no_template: true })
+    throw err
+  }
+  // The whole sequence stays in this template's voice unless a step overrides.
+  approvedDoc.outreach.template_id = tracked.template?.id ?? null
   let outcome
   try {
     outcome = await sendLeadEmail(
@@ -450,7 +586,13 @@ api.post('/leads/:id/approve', async (req, res) => {
       analysis.scoring as RulesAnalysisResult,
       (analysis.summary as PlaceProfileSummary) ?? null,
       recipient,
-      { style, followupNumber: 0, rid: tracked.rid, campaign: tracked.campaign, template: tracked.template },
+      {
+        followupNumber: 0,
+        rid: tracked.rid,
+        campaign: tracked.campaign,
+        template: (tracked.template ?? template) ?? undefined,
+        oneOff,
+      },
     )
   } catch (err) {
     if (err instanceof SuppressedRecipientError || err instanceof DeadRecipientError) {
@@ -474,14 +616,13 @@ api.post('/leads/:id/approve', async (req, res) => {
   approvedDoc.delivery.message_id = outcome.messageId
   approvedDoc.delivery.subject = outcome.subject
   approvedDoc.delivery.subject_variant = outcome.subjectVariant
-  approvedDoc.delivery.style = outcome.style
   approvedDoc.delivery.followup = outcome.followupNumber
   approvedDoc.delivery.language = lead.language
   approvedDoc.delivery.unsubscribe_token = outcome.unsubscribeToken
   if (outcome.ok) {
     approvedDoc.outreach.count = 1
     approvedDoc.outreach.last_sent_at = new Date()
-    if (outcome.style === 'note') approvedDoc.outreach.variants = [outcome.subjectVariant]
+    approvedDoc.outreach.variants = [outcome.subjectVariant]
   }
   approvedDoc.audit_trail.push({
     at: new Date(),
@@ -572,17 +713,22 @@ api.post('/approved/:id/retry', async (req, res) => {
   const analysis = await AnalysisData.findById(lead.analysis_id).lean()
   if (!analysis) return res.status(500).json({ error: 'analysis record missing' })
 
-  const followupNumber = (lead.delivery.followup ?? 0) as 0 | 1 | 2
-  const retryStyle = (lead.delivery.style as EmailStyle) ?? (lead.email_style as EmailStyle) ?? 'note'
+  const followupNumber = lead.delivery.followup ?? 0
   // A retry is a NEW send attempt: new record, new rid, new hash — the
   // failed record stays for audit.
-  const tracked = await beginTrackedSend({
-    lead,
-    recipient,
-    style: retryStyle,
-    followupNumber,
-    preferTemplateId: lead.outreach?.template_id ?? null,
-  })
+  const pinned = chosenTemplateId(lead, followupNumber)
+  let tracked
+  try {
+    tracked = await beginTrackedSend({
+      lead,
+      recipient,
+      followupNumber,
+      preferTemplateId: pinned,
+    })
+  } catch (err) {
+    if (err instanceof NoTemplateError) return res.status(409).json({ error: err.message, no_template: true })
+    throw err
+  }
   try {
     const outcome = await sendLeadEmail(
       lead,
@@ -590,12 +736,11 @@ api.post('/approved/:id/retry', async (req, res) => {
       (analysis.summary as PlaceProfileSummary) ?? null,
       recipient,
       {
-        style: retryStyle,
         followupNumber,
         usedVariants: lead.outreach?.variants ?? [],
         rid: tracked.rid,
         campaign: tracked.campaign,
-        template: tracked.template,
+        template: tracked.template ?? undefined,
       },
     )
     await completeTrackedSend(tracked.sendId, outcome)
@@ -606,13 +751,12 @@ api.post('/approved/:id/retry', async (req, res) => {
     lead.delivery.message_id = outcome.messageId ?? lead.delivery.message_id
     lead.delivery.subject = outcome.subject
     lead.delivery.subject_variant = outcome.subjectVariant
-    lead.delivery.style = outcome.style
     lead.delivery.followup = outcome.followupNumber
     lead.delivery.unsubscribe_token = outcome.unsubscribeToken
     if (outcome.ok) {
       lead.outreach.count = followupNumber + 1
       lead.outreach.last_sent_at = new Date()
-      if (outcome.style === 'note' && !lead.outreach.variants.includes(outcome.subjectVariant)) {
+      if (!lead.outreach.variants.includes(outcome.subjectVariant)) {
         lead.outreach.variants.push(outcome.subjectVariant)
       }
     }
@@ -642,15 +786,20 @@ api.post('/approved/:id/followup', async (req, res) => {
   const analysis = await AnalysisData.findById(lead.analysis_id).lean()
   if (!analysis) return res.status(500).json({ error: 'analysis record missing' })
 
-  const followupNumber = Math.min(lead.outreach.count, MAX_SENDS - 1) as 1 | 2
+  const followupNumber = Math.min(lead.outreach.count, maxSends() - 1)
   // Every follow-up is its own tracked send: new record, new rid, new hash.
-  const tracked = await beginTrackedSend({
-    lead,
-    recipient,
-    style: 'note',
-    followupNumber,
-    preferTemplateId: lead.outreach?.template_id ?? null,
-  })
+  let tracked
+  try {
+    tracked = await beginTrackedSend({
+      lead,
+      recipient,
+      followupNumber,
+      preferTemplateId: chosenTemplateId(lead, followupNumber),
+    })
+  } catch (err) {
+    if (err instanceof NoTemplateError) return res.status(409).json({ error: err.message, no_template: true })
+    throw err
+  }
   let outcome
   try {
     outcome = await sendLeadEmail(
@@ -663,7 +812,7 @@ api.post('/approved/:id/followup', async (req, res) => {
         usedVariants: lead.outreach.variants,
         rid: tracked.rid,
         campaign: tracked.campaign,
-        template: tracked.template,
+        template: tracked.template ?? undefined,
       },
     )
   } catch (err) {
@@ -683,7 +832,6 @@ api.post('/approved/:id/followup', async (req, res) => {
   lead.delivery.message_id = outcome.messageId ?? lead.delivery.message_id
   lead.delivery.subject = outcome.subject
   lead.delivery.subject_variant = outcome.subjectVariant
-  lead.delivery.style = outcome.style
   lead.delivery.followup = outcome.followupNumber
   lead.delivery.unsubscribe_token = outcome.unsubscribeToken
   if (outcome.ok) {

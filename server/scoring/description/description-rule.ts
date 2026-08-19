@@ -1,6 +1,6 @@
 /**
- * VERBATIM PORT of the Brandstash description-analysis rule contract:
- *   brandstash-app/api/src/gbp/description-analysis/description-rule.interface.ts
+ * VERBATIM PORT of the description-analysis rule contract:
+ *   the product’s rules engine
  * (minus the NestJS DI token — the lead finder wires the rule list statically.)
  */
 

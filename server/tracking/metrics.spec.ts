@@ -15,8 +15,7 @@ const send = (over: Partial<SendRow> = {}): SendRow => ({
   place_id: 'p1',
   status: 'sent',
   sent_at: '2026-08-10T12:00:00.000Z',
-  style: 'note',
-  template_id: 'note_v1',
+  template_id: 'tpl_a_v1',
   variant: 0,
   followup: 0,
   attempt: 1,
@@ -118,24 +117,24 @@ describe('timeseries', () => {
 
 describe('comparative breakdowns (template / campaign / variant / attempt)', () => {
   const rows = [
-    visited({ template_id: 'note_v1' }),
-    send({ template_id: 'note_v1' }),
-    send({ template_id: 'dashboard_v2', style: 'dashboard', campaign: 'leadfinder_france', attempt: 1 }),
-    visited({ template_id: 'note_followup_1_v2', attempt: 2, campaign: 'leadfinder_france' }),
-    send({ status: 'failed', template_id: 'note_v1' }), // never grouped
+    visited({ template_id: 'tpl_a_v1' }),
+    send({ template_id: 'tpl_a_v1' }),
+    send({ template_id: 'tpl_b_v2', campaign: 'leadfinder_france', attempt: 1 }),
+    visited({ template_id: 'tpl_a_followup_1_v2', attempt: 2, campaign: 'leadfinder_france' }),
+    send({ status: 'failed', template_id: 'tpl_a_v1' }), // never grouped
   ]
 
   it('groups by template with sent/visited/rate/sessions', () => {
     const byTemplate = breakdown(rows, (r) => r.template_id)
-    const note = byTemplate.find((b) => b.key === 'note_v1')!
+    const note = byTemplate.find((b) => b.key === 'tpl_a_v1')!
     expect(note.sent).toBe(2)
     expect(note.visited).toBe(1)
     expect(note.rate).toBe(50)
     expect(note.sessions).toBe(2)
-    const followup = byTemplate.find((b) => b.key === 'note_followup_1_v2')!
+    const followup = byTemplate.find((b) => b.key === 'tpl_a_followup_1_v2')!
     expect(followup.rate).toBe(100)
     // Sorted by rate desc.
-    expect(byTemplate[0].key).toBe('note_followup_1_v2')
+    expect(byTemplate[0].key).toBe('tpl_a_followup_1_v2')
   })
 
   it('filters by campaign and attempt through the group key', () => {

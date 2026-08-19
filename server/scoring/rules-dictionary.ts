@@ -1,11 +1,11 @@
 /**
  * VERBATIM PORT — do not edit thresholds/weights/labels here without checking
  * the source of truth first:
- *   brandstash-app/api/src/gbp/utils/rules-dictionary.ts  (RULES_VERSION 1.3.0)
+ *   the product’s rules engine  (RULES_VERSION 1.3.0)
  *
  * Versioned, deterministic dictionaries for the GBP rules engine. Everything
  * here is pure data: thresholds, weights and recommendation templates.
- * Scoring stays on the Brandstash 0–10 scale (with decimals).
+ * Scoring stays on the 0–10 scale (with decimals).
  */
 
 export const RULES_VERSION = '1.3.0'
@@ -145,9 +145,9 @@ export const KEYWORD_STOPWORDS: ReadonlySet<string> = new Set([
 export const PRIORITY_ACTIONS_COUNT = 3
 
 /**
- * Recommendation templates per category × resolved status. Canonical Brandstash
+ * Recommendation templates per category × resolved status. Canonical 
  * (Portuguese) strings — the email/UI localize at the presentation layer, the
- * engine output stays byte-identical to Brandstash.
+ * engine output stays byte-identical across versions.
  */
 export const RECOMMENDATIONS: Record<CategoryKey, Record<CategoryStatus, string>> = {
   fotos: {

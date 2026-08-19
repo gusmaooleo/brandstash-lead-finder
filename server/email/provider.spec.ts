@@ -9,11 +9,11 @@ function liveResendSettings() {
     email: {
       mode: 'resend',
       resendKey: 're_test_123',
-      from: { name: 'Brandstash', email: 'get@brandstash.ai', label: addressLabel('Brandstash', 'get@brandstash.ai') },
+      from: { name: 'Acme', email: 'hello@acme.example', label: addressLabel('Acme', 'hello@acme.example') },
       replyTo: {
-        name: 'Brandstash',
-        email: 'leonardo@brandstash.ai',
-        label: addressLabel('Brandstash', 'leonardo@brandstash.ai'),
+        name: '',
+        email: 'ana@acme.example',
+        label: addressLabel('Acme', 'ana@acme.example'),
       },
     },
   })
@@ -44,22 +44,22 @@ describe('ResendMailProvider', () => {
     expect(headers['Idempotency-Key']).toMatch(/^leadfinder-tok-f0-[0-9a-f]{12}$/)
     const body = JSON.parse(init.body as string)
     expect(body).toEqual({
-      from: 'Brandstash <get@brandstash.ai>',
+      from: 'Acme <hello@acme.example>',
       to: ['dono@padaria.com.br'],
       subject: 'olá',
       html: '<p>oi</p>',
       text: 'oi',
-      reply_to: 'Brandstash <leonardo@brandstash.ai>',
+      reply_to: 'Acme <ana@acme.example>',
       headers: { 'List-Unsubscribe': '<http://localhost:4000/unsubscribe?t=tok>' },
     })
   })
 
   it('name + email are concatenated into ONE identity both transports send', () => {
-    expect(settings().email.from.label).toBe('Brandstash <get@brandstash.ai>')
-    expect(addressLabel('Leonardo', 'GET@brandstash.ai')).toBe('Leonardo <get@brandstash.ai>')
+    expect(settings().email.from.label).toBe('Acme <hello@acme.example>')
+    expect(addressLabel('Ana', 'HELLO@acme.example')).toBe('Ana <hello@acme.example>')
     // A bare address stays bare; an empty address has no label at all.
-    expect(addressLabel('', 'get@brandstash.ai')).toBe('get@brandstash.ai')
-    expect(addressLabel('Leonardo', '')).toBe('')
+    expect(addressLabel('', 'hello@acme.example')).toBe('hello@acme.example')
+    expect(addressLabel('Ana', '')).toBe('')
   })
 
   it('a different recipient is a different idempotency key; same recipient repeats it', () => {

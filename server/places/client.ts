@@ -1,8 +1,8 @@
 /**
  * Google Places API (New) client — server-side only, minimal field masks.
  *
- * The details mask mirrors Brandstash's PLACE_DETAILS_FIELD_MASK
- * (brandstash-app/api/src/gbp/constants/places.constants.ts) minus `reviews`:
+ * The details mask mirrors the product’s place-details field mask
+ * (the product’s rules engine) minus `reviews`:
  * no scoring rule reads the review sample, and `reviews` alone pins the call to
  * the most expensive billing tier. `photos.name` is requested instead of full
  * `photos` — only the count feeds the score (Places caps the list at 10, which
@@ -120,8 +120,8 @@ export async function getPlaceDetails(
 }
 
 /**
- * Port of Brandstash `buildPlaceProfile`
- * (brandstash-app/api/src/gbp/utils/place-profile.util.ts): same field
+ * Builds the place profile
+ * (the product’s rules engine): same field
  * resolution order. `reviews_count`/`reviews_sample` are stored empty — not
  * requested (see header) and never read by the scoring rules.
  */

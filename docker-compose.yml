@@ -2,7 +2,7 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
-    # Host 27018: the Brandstash superproject's dev mongo already owns 27017.
+    # Host 27018: leaves the conventional 27017 free for any other local mongo.
     # Inside the compose network the app talks to mongo:27017 directly.
     ports:
       - '27018:27017'

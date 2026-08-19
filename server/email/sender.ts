@@ -5,6 +5,11 @@
  *  - live (delivery mode smtp|resend): delivered by that transport — one shared
  *    contract (see provider.ts).
  *
+ * Every email comes from a template in the database (email/template-store.ts).
+ * There is no copy in this codebase and no fallback pitch: with an empty
+ * library the app refuses to render rather than inventing words, and the UI
+ * says so instead of offering a send button that cannot work.
+ *
  * Safety: the suppression list is checked immediately before every send
  * (unsubscribed / do-not-contact addresses are never mailed), states are
  * explicit (not_sent → sent/sent_dry_run/failed), attempts are counted and a
@@ -18,16 +23,12 @@ import { getMailProvider } from './provider'
 import { DeadRecipientError, isDeadAddress, isHardBounce, recordDeadAddress } from './dead-addresses'
 import { checkMx } from '../enrichment/mx'
 import { Suppression, type LeadDoc } from '../leads/models'
-import { renderLeadEmail, pickSubject } from './render'
-import { EMAIL_LOCALES } from './locales'
-import { pickNoteVariant, renderNoteEmail } from './notes'
-import { AGENCY_NOTE_PACKS } from './notes-agency'
-import { audienceForLead, type OutreachAudience } from './audience'
 import { resolveTemplate, type ResolvedTemplate } from './template-store'
-import { renderCustomMessage } from './template-render'
-import { buildFindings, NOTE_PACKS } from './notes'
+import { renderCustomMessage, type TemplateCategory } from './template-render'
+import { resolveFindings } from './findings'
+import { pickVariantIndex } from './variants'
 import { createPreviewLandingUrl, createTrackedLandingUrl, templateIdFor } from '../tracking/landing-url'
-import type { EmailLanguage, EmailStyle } from '../../shared/types'
+import type { EmailLanguage } from '../../shared/types'
 import type { PlaceProfileSummary } from '../scoring/types'
 import type { RulesAnalysisResult } from '../scoring/analyze'
 
@@ -39,12 +40,17 @@ export function buildUnsubscribeUrl(token: string): string {
   return `${settings().email.unsubscribeBaseUrl}/unsubscribe?t=${token}`
 }
 
+/** Nothing to send with — never a silent fallback to someone else's words. */
+export class NoTemplateError extends Error {
+  constructor(readonly language: string) {
+    super(`No active email template matches this lead (language: ${language}). Create one in Settings → Templates.`)
+  }
+}
+
 export type OutreachOptions = {
-  /** Defaults to the lead's chosen style; follow-ups are always notes. */
-  style?: EmailStyle
-  /** 0 = initial (default), 1 = bump, 2 = breakup. */
-  followupNumber?: 0 | 1 | 2
-  /** Note variants already sent to this lead — the pick avoids them. */
+  /** 0 = initial (default), 1..5 = follow-ups. */
+  followupNumber?: number
+  /** Variants already sent to this lead — the pick avoids them. */
   usedVariants?: readonly number[]
   /**
    * Raw per-send tracking token (see server/tracking/rid.ts). When present,
@@ -61,43 +67,47 @@ export type OutreachOptions = {
   preview?: boolean
   /** Stable utm_campaign slug (campaignFor(lead.market_scope)). */
   campaign?: string
-  /** Overrides the audience derived from the lead's category. */
-  audience?: OutreachAudience
   /**
    * The template this send must use (email/template-store.ts). Resolved once
    * per send by beginTrackedSend so the tracked template_id and the rendered
-   * email can never disagree; absent = fall back to the coded packs.
+   * email can never disagree.
    */
   template?: ResolvedTemplate
+  /**
+   * A one-off email written for THIS lead and not saved to the library. Same
+   * tokens, same compliance, no template document.
+   */
+  oneOff?: { subject: string; html: string; text?: string | null } | null
 }
 
 export type RenderedOutreach = {
   subject: string
   html: string
-  /** text/plain alternative — always present for notes. */
+  /** text/plain alternative. */
   text: string | null
-  style: EmailStyle
-  /** Note variant OR dashboard subject variant — recorded per send. */
+  /** Which angle of the message was drawn — recorded per send. */
   variant: number
-  band: 'low' | 'high' | null
   followupNumber: number
-  /** Which copy was used — recorded so analytics can compare the pitches. */
-  audience: OutreachAudience
+  /** The template's audience label — recorded so analytics can compare pitches. */
+  audience: string
   /** Analytics id of the template that produced this email. */
   templateId: string
   /** Human-readable template name, for the preview UI. */
   templateName: string
 }
 
+export type RenderableLead = Pick<
+  LeadDoc,
+  'place_id' | 'name' | 'city_label' | 'google_rating' | 'review_count' | 'score'
+> & {
+  category?: string | null
+  discovery?: { query?: string | null; search_category?: string | null } | null
+}
+
+const ONE_OFF_ID = 'one_off'
+
 export function renderForLead(
-  lead: Pick<
-    LeadDoc,
-    'place_id' | 'name' | 'city_label' | 'google_rating' | 'review_count' | 'score'
-  > & {
-    /** Places primaryType + the searched catalog category — pick the copy. */
-    category?: string | null
-    discovery?: { query?: string | null; search_category?: string | null } | null
-  },
+  lead: RenderableLead,
   scoring: RulesAnalysisResult,
   summary: PlaceProfileSummary | null,
   language: EmailLanguage,
@@ -106,54 +116,35 @@ export function renderForLead(
 ): RenderedOutreach {
   const sender = { name: settings().email.from.name, email: settings().email.from.email || 'sender@example.invalid' }
   const offer = settings().offer
-  const brand = {
-    name: offer.brandName,
-    logoUrl: offer.logoUrl,
-    siteLabel: offer.siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, ''),
-  }
   const unsubscribeUrl = buildUnsubscribeUrl(unsubscribeToken)
   const followupNumber = opts.followupNumber ?? 0
-  // A marketing agency gets the multi-client pitch (notes-agency.ts), never
-  // the "your profile is losing customers" one — and always as a note: the
-  // dashboard format reports on the LEAD's own profile, which is not what an
-  // agency is being sold.
-  const template = opts.template
-  const audience: OutreachAudience =
-    opts.audience ??
-    (template
-      ? template.kind === 'builtin'
-        ? template.audience
-        : template.audience === 'agency'
-          ? 'agency'
-          : 'business'
-      : audienceForLead(lead))
-  const custom = template?.kind === 'custom' ? template : null
-  // Follow-ups are always personal notes, regardless of the lead's style.
-  const style: EmailStyle =
-    custom || followupNumber > 0 || audience === 'agency'
-      ? 'note'
-      : template?.kind === 'builtin' && template.pack === 'dashboard'
-        ? 'dashboard'
-        : (opts.style ?? 'note')
+  const template = opts.template ?? null
 
-  // The variant must be known BEFORE rendering so the tracked landing URL can
-  // carry it in utm_content. Both picks are deterministic — identical to what
-  // the renderers themselves compute.
-  const variant =
-    style === 'dashboard'
-      ? pickSubject(EMAIL_LOCALES[language] ?? EMAIL_LOCALES.en, lead.place_id, lead.name, lead.google_rating ?? null).variant
-      : pickNoteVariant(lead.place_id, opts.usedVariants ?? [])
+  const message = template?.messages.find((m) => m.followup === followupNumber) ?? null
+  if (!opts.oneOff && !message?.variants.length) throw new NoTemplateError(language)
 
-  const templateId = custom
-    ? `custom_${custom.id}${followupNumber > 0 ? `_followup_${followupNumber}` : ''}`
-    : templateIdFor(style, followupNumber, audience)
+  // The angle must be known BEFORE rendering: the tracked landing URL carries
+  // it in utm_content, so the link and the copy can never disagree.
+  const variants = message?.variants ?? []
+  const variant = opts.oneOff
+    ? 0
+    : Math.max(
+        0,
+        pickVariantIndex(variants, {
+          placeId: lead.place_id,
+          rating: lead.google_rating ?? null,
+          useBands: Boolean(template?.lowScoreVariants),
+          used: opts.usedVariants ?? [],
+        }),
+      )
+
+  const templateId = opts.oneOff ? ONE_OFF_ID : templateIdFor(template!.id, followupNumber)
 
   // One rid per send: every landing link in this email shares it. A preview
   // gets the same link without the tracking contract (see landing-url.ts).
   const linkInput = {
     language,
     campaign: opts.campaign ?? 'leadfinder_unknown',
-    emailType: style,
     templateId,
     variantId: `v${variant + 1}`,
     attemptNumber: followupNumber + 1,
@@ -164,102 +155,64 @@ export function renderForLead(
       ? createPreviewLandingUrl(linkInput)
       : null
 
-  if (custom) {
-    const message = custom.messages.find((m) => m.followup === followupNumber) ?? custom.messages[0]
-    const pack = NOTE_PACKS[language] ?? NOTE_PACKS.en
-    const findings = buildFindings(
-      pack,
-      summary ?? { photos_count: 0, has_hours: false, editorial_summary: null, total_ratings: lead.review_count ?? null },
-    )
-    const rendered = renderCustomMessage(
-      message,
-      {
-        businessName: lead.name,
-        city: lead.city_label.split(',')[0].trim(),
-        rating: lead.google_rating ?? null,
-        reviewCount: lead.review_count ?? null,
-        score: lead.score,
-        finding1: findings[0],
-        finding2: findings[1] ?? null,
-        senderName: sender.name,
-        senderEmail: sender.email,
-        unsubscribeUrl,
-        landingUrl,
-        assets: [offer.logoUrl].filter(Boolean),
-      },
-      language,
-    )
-    return {
-      subject: rendered.subject,
-      html: rendered.html,
-      text: rendered.text,
-      style: 'note',
-      variant: 0,
-      band: null,
-      followupNumber,
-      audience,
-      templateId,
-      templateName: custom.name,
-    }
+  const profileSummary = summary ?? {
+    photos_count: 0,
+    has_hours: false,
+    editorial_summary: null,
+    total_ratings: lead.review_count ?? null,
   }
+  const findings = resolveFindings(template?.findings, profileSummary, variant)
 
-  if (style === 'dashboard') {
-    const rendered = renderLeadEmail({
-      placeId: lead.place_id,
-      name: lead.name,
+  const rendered = renderCustomMessage(
+    opts.oneOff ?? variants[variant],
+    {
+      businessName: lead.name,
+      city: lead.city_label.split(',')[0].trim(),
       cityLabel: lead.city_label,
+      siteLabel: offer.siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, ''),
       rating: lead.google_rating ?? null,
       reviewCount: lead.review_count ?? null,
       score: lead.score,
-      categories: scoring.categories,
-      language,
-      sender,
-      brand,
+      finding1: findings[0] ?? '',
+      finding2: findings[1] ?? null,
+      senderName: sender.name,
+      senderEmail: sender.email,
+      brandName: offer.brandName,
       unsubscribeUrl,
       landingUrl,
-    })
-    return {
-      subject: rendered.subject,
-      html: rendered.html,
-      text: null,
-      style,
-      variant: rendered.subjectVariant,
-      band: rendered.band,
-      followupNumber,
-      audience,
-      templateId,
-      templateName: template?.name ?? 'Business owners — dashboard report',
-    }
-  }
+      assets: [...(template?.assets ?? []), offer.logoUrl].filter(Boolean),
+      categories: scoring.categories.map(
+        (c): TemplateCategory => ({
+          key: c.category,
+          label: c.label,
+          status: c.status,
+          score: c.score,
+          recommendation: c.recommendation,
+        }),
+      ),
+      strings: template?.strings ?? {},
+      profile: {
+        photosCount: summary?.photos_count ?? null,
+        hasHours: summary?.has_hours ?? null,
+        address: summary?.address ?? null,
+        phone: summary?.phone ?? null,
+        website: summary?.website ?? null,
+        category: lead.category ?? null,
+      },
+      language,
+    },
+    { footerHtml: settings().email.footerHtml },
+  )
 
-  const note = renderNoteEmail({
-    placeId: lead.place_id,
-    name: lead.name,
-    cityLabel: lead.city_label,
-    rating: lead.google_rating ?? null,
-    reviewCount: lead.review_count ?? null,
-    score: lead.score,
-    summary: summary ?? { photos_count: 0, has_hours: false, editorial_summary: null, total_ratings: lead.review_count ?? null },
-    language,
-    sender,
-    unsubscribeUrl,
+  return {
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text,
     variant,
     followupNumber,
-    landingUrl,
-    pack: audience === 'agency' ? AGENCY_NOTE_PACKS[language] : undefined,
-    brandName: brand.name,
-  })
-  return {
-    subject: note.subject,
-    html: note.html,
-    text: note.text,
-    style,
-    variant: note.variant,
-    band: null,
-    followupNumber,
-    audience,
+    audience: template?.audience ?? 'custom',
     templateId,
-    templateName: template?.name ?? (audience === 'agency' ? 'Marketing agencies — multi-client panel' : 'Business owners — personal note'),
+    templateName: opts.oneOff ? 'One-off email' : (template?.name ?? ''),
   }
 }
 
@@ -270,10 +223,9 @@ export type SendOutcome = {
   error: string | null
   subject: string
   subjectVariant: number
-  style: EmailStyle
   followupNumber: number
   unsubscribeToken: string
-  audience: OutreachAudience
+  audience: string
   templateId: string
 }
 
@@ -301,17 +253,14 @@ export async function sendLeadEmail(
   const language = (lead.language as EmailLanguage) ?? 'en'
   const template =
     opts.template ??
-    (await resolveTemplate(lead, {
-      language,
-      style: opts.style ?? ((lead.email_style as EmailStyle) || 'note'),
-      followupNumber: opts.followupNumber ?? 0,
-    }))
+    (opts.oneOff
+      ? undefined
+      : ((await resolveTemplate(lead, { language, followupNumber: opts.followupNumber ?? 0 })) ?? undefined))
   const rendered = renderForLead(lead, scoring, summary, language, token, { ...opts, template })
 
   const base = {
     subject: rendered.subject,
     subjectVariant: rendered.variant,
-    style: rendered.style,
     followupNumber: rendered.followupNumber,
     unsubscribeToken: token,
     audience: rendered.audience,

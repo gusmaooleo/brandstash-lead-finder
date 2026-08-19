@@ -11,19 +11,21 @@ import {
   retryDelivery,
   selectEmail,
   sendFollowup,
-  setEmailStyle,
   skipLead,
   stopFollowups,
+  chooseLeadTemplate,
+  getLeadTemplates,
+  previewOneOff,
   type Analysis,
   type EmailPreview,
   type Lead,
+  type LeadTemplateOptions,
   type Status,
 } from '../api'
 import { ScoreRing } from './ScoreRing'
 import { GmailFrame } from './GmailFrame'
 import { Button, Chip, Input, SectionLabel, Select, STATUS_STYLE, flagEmoji, langLabel } from './ui'
 import { ThemeToggle, useTheme } from './ThemeToggle'
-import type { EmailStyle } from '../../shared/types'
 
 const LANGS = ['en', 'pt', 'es', 'fr', 'de', 'it', 'zh-TW', 'zh-HK', 'ja', 'ko'] as const
 
@@ -47,7 +49,10 @@ export function LeadPage() {
   const [source, setSource] = useState<'approval_list' | 'approved'>('approval_list')
   const [preview, setPreview] = useState<EmailPreview | null>(null)
   const [previewLang, setPreviewLang] = useState<string | null>(null)
-  const [previewFollowup, setPreviewFollowup] = useState<0 | 1 | 2>(0)
+  const [previewFollowup, setPreviewFollowup] = useState(0)
+  const [templateOptions, setTemplateOptions] = useState<LeadTemplateOptions | null>(null)
+  // A one-off email: written here, sent to this lead, never saved.
+  const [oneOff, setOneOff] = useState<{ subject: string; body: string; html: boolean } | null>(null)
   const [appStatus, setAppStatus] = useState<Status | null>(null)
   const [recipient, setRecipient] = useState<string>('')
   const [manualEmail, setManualEmail] = useState<string>('')
@@ -81,19 +86,36 @@ export function LeadPage() {
 
   useEffect(() => {
     if (!lead) return
+    void getLeadTemplates(id, previewFollowup).then(setTemplateOptions).catch(() => setTemplateOptions(null))
+  }, [id, lead, previewFollowup])
+
+  const chosenTemplate = templateOptions?.chosen_id ?? templateOptions?.suggested_id ?? null
+
+  useEffect(() => {
+    if (!lead) return
     const lang = previewLang ?? lead.language
-    void getEmailPreview(id, { lang, style: lead.email_style, followup: previewFollowup })
+    if (oneOff) {
+      const draft = oneOff.html ? { html: oneOff.body } : { text: oneOff.body }
+      void previewOneOff(id, { subject: oneOff.subject, ...draft })
+        .then(setPreview)
+        .catch(() => setPreview(null))
+      return
+    }
+    void getEmailPreview(id, { lang, template: chosenTemplate ?? undefined, followup: previewFollowup })
       .then(setPreview)
       .catch(() => setPreview(null))
-  }, [id, lead, previewLang, previewFollowup])
+  }, [id, lead, previewLang, previewFollowup, chosenTemplate, oneOff])
 
-  const onPickStyle = (style: EmailStyle) => {
-    if (!lead || lead.email_style === style) return
-    void run('style', async () => {
-      await setEmailStyle(id, style)
-      await load()
+  const onPickTemplate = (templateId: string) => {
+    setOneOff(null)
+    void run('template', async () => {
+      await chooseLeadTemplate(id, templateId, previewFollowup)
+      setTemplateOptions((prev) => (prev ? { ...prev, chosen_id: templateId } : prev))
     })
   }
+
+  /** No template in the library: nothing can be sent, and the UI must say so. */
+  const noTemplates = templateOptions !== null && templateOptions.templates.length === 0
 
   /** Next follow-up is due (approved, 1–2 sends, waited long enough, not stopped). */
   const followupDue = Boolean(
@@ -118,7 +140,12 @@ export function LeadPage() {
 
   const emails = lead?.contact.emails ?? []
   const needsSelection = emails.length > 1
-  const canApprove = source === 'approval_list' && lead?.status === 'pending' && Boolean(recipient) && emails.length > 0
+  const canApprove =
+    source === 'approval_list' &&
+    lead?.status === 'pending' &&
+    Boolean(recipient) &&
+    emails.length > 0 &&
+    (!noTemplates || Boolean(oneOff?.subject.trim() && oneOff?.body.trim()))
 
   const prospectReasons = useMemo(() => {
     if (!lead || !analysis) return []
@@ -131,7 +158,7 @@ export function LeadPage() {
       reasons.push(`Strong ${lead.google_rating.toFixed(1)}★ reputation — retention/consistency pitch applies.`)
     }
     if (lead.google_rating == null) reasons.push('No Google rating yet — visibility pitch from zero.')
-    if (lead.score < 7) reasons.push(`Brandstash score ${lead.score.toFixed(1)}/10 — visible, fixable gaps.`)
+    if (lead.score < 7) reasons.push(`Profile score ${lead.score.toFixed(1)}/10 — visible, fixable gaps.`)
     if (missing.length) reasons.push(`Missing on the profile: ${missing.join(', ')}.`)
     if (emails.some((e) => e.generic)) reasons.push('Generic business inbox available — appropriate outreach channel.')
     if ((lead.review_count ?? 0) < 50 && lead.google_rating != null) {
@@ -288,7 +315,7 @@ export function LeadPage() {
                 </div>
 
                 <div className="mt-4">
-                  <SectionLabel>Key score drivers (Brandstash rules, canonical)</SectionLabel>
+                  <SectionLabel>Key score drivers (scoring rules)</SectionLabel>
                   <ol className="mt-2 flex flex-col gap-1.5">
                     {scoring.priorityActions.map((action, i) => (
                       <li key={i} className="flex gap-2.5 rounded-xl border border-line bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-gray-1">
@@ -300,7 +327,7 @@ export function LeadPage() {
                 </div>
 
                 <div className="mt-4">
-                  <SectionLabel>Why a good Brandstash prospect</SectionLabel>
+                  <SectionLabel>Why a good prospect</SectionLabel>
                   <ul className="mt-2 flex flex-col gap-1">
                     {prospectReasons.map((r, i) => (
                       <li key={i} className="flex items-start gap-2 text-[12.5px] leading-relaxed text-gray-1">
@@ -501,37 +528,86 @@ export function LeadPage() {
           </div>
 
           <div className="mx-auto mt-3 w-full max-w-[920px]">
-            {/* email style — personal note is the default; dashboard is opt-in per lead */}
-            <div className="flex items-center gap-1 rounded-xl border border-line bg-paper p-1">
-              {(
-                [
-                  { key: 'note' as EmailStyle, label: 'Personal note', hint: 'default' },
-                  { key: 'dashboard' as EmailStyle, label: 'Dashboard', hint: 'visual report' },
-                ] as const
-              ).map((s) => (
-                <button
-                  key={s.key}
-                  disabled={busy !== null}
-                  onClick={() => onPickStyle(s.key)}
-                  className={`flex-1 rounded-lg px-3 py-1.5 text-[12px] transition-colors ${
-                    lead.email_style === s.key ? 'bg-paper-2 font-medium text-ink' : 'text-gray-2 hover:text-ink'
-                  }`}
-                >
-                  {s.label} <span className="text-[10px] text-gray-3">· {s.hint}</span>
-                </button>
-              ))}
-              {source === 'approved' && lead.outreach && lead.outreach.count >= 1 && lead.outreach.count < 3 && (
-                <button
-                  onClick={() => setPreviewFollowup((f) => (f ? 0 : (lead.outreach.count as 1 | 2)))}
-                  className={`rounded-lg px-3 py-1.5 text-[12px] transition-colors ${
-                    previewFollowup ? 'bg-brand-green-soft font-medium text-brand-green' : 'text-gray-2 hover:text-ink'
-                  }`}
-                  title="Preview the next follow-up email"
-                >
-                  Follow-up {lead.outreach.count + 1}/3
-                </button>
-              )}
+            {/* which template this send uses — the resolver only suggests */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                className="min-w-[280px] flex-1"
+                value={oneOff ? 'one_off' : (chosenTemplate ?? '')}
+                disabled={busy !== null || noTemplates}
+                onChange={(e) => {
+                  const value = e.target.value
+                  if (value === 'one_off') setOneOff({ subject: '', body: '', html: false })
+                  else onPickTemplate(value)
+                }}
+              >
+                {templateOptions?.templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                    {t.id === templateOptions.suggested_id ? ' · suggested for this category' : ''}
+                    {t.steps.includes(previewFollowup) ? '' : ' · no copy for this step'}
+                  </option>
+                ))}
+                <option value="one_off">Write a one-off email…</option>
+              </Select>
+
+              {source === 'approved' &&
+                lead.outreach &&
+                lead.outreach.count >= 1 &&
+                lead.outreach.count <= (templateOptions?.max_followups ?? 2) && (
+                  <button
+                    onClick={() => setPreviewFollowup((f) => (f ? 0 : lead.outreach.count))}
+                    className={`rounded-lg border border-line px-3 py-1.5 text-[12px] transition-colors ${
+                      previewFollowup ? 'bg-brand-green-soft font-medium text-brand-green' : 'text-gray-2 hover:text-ink'
+                    }`}
+                    title="Preview the next follow-up email"
+                  >
+                    Follow-up {lead.outreach.count}/{templateOptions?.max_followups ?? 2}
+                  </button>
+                )}
             </div>
+
+            {noTemplates && (
+              <div className="mt-2 rounded-xl border px-3.5 py-2.5 text-[12.5px] tint-warn">
+                You have no saved email template yet. Create one in Settings → Templates, or write a one-off
+                email below — until then there is nothing to send.
+              </div>
+            )}
+
+            {oneOff && (
+              <div className="mt-2 rounded-xl border border-line bg-paper p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <SectionLabel>One-off email · not saved to the library</SectionLabel>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-[11.5px] text-gray-2">
+                      <input
+                        type="checkbox"
+                        checked={oneOff.html}
+                        onChange={(e) => setOneOff({ ...oneOff, html: e.target.checked })}
+                      />
+                      write HTML
+                    </label>
+                    <Button variant="ghost" onClick={() => setOneOff(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+                <Input
+                  className="mt-2"
+                  placeholder="Subject — {{business_name}} works here too"
+                  value={oneOff.subject}
+                  onChange={(e) => setOneOff({ ...oneOff, subject: e.target.value })}
+                />
+                <textarea
+                  className="mt-2 h-44 w-full rounded-xl border border-line bg-card px-3 py-2 font-mono text-[12.5px] text-ink outline-none focus:border-gray-3"
+                  placeholder={oneOff.html ? '<p>Hi {{business_name}}…</p>' : 'Hi {{business_name}},\n\nI had a look at your Google profile…'}
+                  value={oneOff.body}
+                  onChange={(e) => setOneOff({ ...oneOff, body: e.target.value })}
+                />
+                <div className="mt-1 text-[11px] text-gray-3">
+                  The preview below updates as you type. The unsubscribe footer is added automatically.
+                </div>
+              </div>
+            )}
 
             {(previewLang ?? lead.language) !== lead.language && (
               <div className="mt-1.5 text-[11px] tint-warn-text">
@@ -541,17 +617,14 @@ export function LeadPage() {
             {preview && (
               <>
                 <div className="mt-2 text-[10.5px] text-gray-3">
-                  {preview.style === 'note'
-                    ? `personal note · variant ${preview.subject_variant + 1}/3 (picked for this lead)${
-                        preview.followup ? ` · follow-up #${preview.followup}` : ''
-                      } · sent with a plain-text version`
-                    : `dashboard · subject variant ${preview.subject_variant + 1} · ${preview.band === 'low' ? 'improvement' : 'retention'} tone`}
+                  {preview.template_name || 'One-off email'} · variant {preview.subject_variant + 1} (picked for this
+                  lead){preview.followup ? ` · follow-up #${preview.followup}` : ''} · sent with a plain-text version
                 </div>
                 <div className="mt-2">
                   <GmailFrame
                     subject={preview.subject}
-                    senderName={appStatus?.sender_name ?? 'Brandstash'}
-                    senderEmail={appStatus?.sender_email ?? 'get@brandstash.ai'}
+                    senderName={appStatus?.sender_name ?? 'Your name'}
+                    senderEmail={appStatus?.sender_email ?? 'sender@example.com'}
                     html={preview.html}
                     height={640}
                   />

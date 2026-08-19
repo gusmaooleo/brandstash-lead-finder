@@ -27,7 +27,7 @@ const START_CENTER: [number, number] = [-45, 12] // Atlantic: Brazil + Europe in
 const YELLOW = '#fbbf24'
 const GREEN = '#00d492'
 
-const SOURCE_ID = 'brandstash-leads'
+const SOURCE_ID = 'leads'
 const CORE_LAYERS = ['bs-core-discovered', 'bs-core-sent'] as const
 
 function toFeatureCollection(points: GlobePoint[]): FeatureCollection {

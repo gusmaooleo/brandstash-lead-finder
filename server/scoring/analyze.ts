@@ -1,6 +1,6 @@
 /**
- * VERBATIM PORT of the Brandstash business-score engine:
- *   brandstash-app/api/src/gbp/services/gbp-rules-analysis.service.ts
+ * The profile scoring engine:
+ *   the product’s rules engine
  * (NestJS service flattened to a pure function; the injected description
  * pipeline becomes `analyzeDescription`. Behavior is identical — see
  * scoring.spec.ts for the ported parity suite.)
@@ -170,7 +170,7 @@ function scoreHorarios(summary: PlaceProfileSummary): CategoryComputation {
  * Description scoring — delegated to the deterministic rule pipeline.
  * `descriptionOverride` carries source-resolved text; without it (the lead
  * finder's normal path) the Places `editorial_summary` is scored, exactly like
- * Brandstash's unconnected-project/competitor pipeline.
+ * 's unconnected-project/competitor pipeline.
  */
 function scoreDescricao(
   summary: PlaceProfileSummary,

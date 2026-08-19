@@ -14,7 +14,7 @@ describe('persisted send record', () => {
   it('contains ONLY the hash — the raw rid is never a field or value', () => {
     const rid = generateRid()
     const record = buildSendRecord(
-      { lead, recipient: 'contato@padaria.com.br', style: 'note', followupNumber: 0 },
+      { lead, recipient: 'contato@padaria.com.br', followupNumber: 0 },
       hashRid(rid),
     )
     const json = JSON.stringify(record)
@@ -28,19 +28,20 @@ describe('persisted send record', () => {
 
   it('carries the attribution metadata of the individual send', () => {
     const record = buildSendRecord(
-      { lead, recipient: 'a@b.co', style: 'note', followupNumber: 2 },
+      { lead, recipient: 'a@b.co', followupNumber: 2 },
       hashRid(generateRid()),
     )
     expect(record.campaign).toBe('leadfinder_portuguese')
-    expect(record.template_id).toBe('note_followup_2')
+    // No template resolved yet: the id is filled in by beginTrackedSend.
+    expect(record.template_id).toBe('unresolved')
     expect(record.followup).toBe(2)
     expect(record.attempt).toBe(3)
     expect(record.place_id).toBe('ChIJrecord1')
   })
 
   it('two records for the SAME lead never share a hash', () => {
-    const a = buildSendRecord({ lead, recipient: 'a@b.co', style: 'note', followupNumber: 0 }, hashRid(generateRid()))
-    const b = buildSendRecord({ lead, recipient: 'a@b.co', style: 'note', followupNumber: 1 }, hashRid(generateRid()))
+    const a = buildSendRecord({ lead, recipient: 'a@b.co', followupNumber: 0 }, hashRid(generateRid()))
+    const b = buildSendRecord({ lead, recipient: 'a@b.co', followupNumber: 1 }, hashRid(generateRid()))
     expect(a.tracking_id_hash).not.toBe(b.tracking_id_hash)
   })
 })

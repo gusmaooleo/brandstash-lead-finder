@@ -13,13 +13,12 @@
  * every follow-up goes through begin() again → new record, new rid, new hash.
  */
 
-import type { EmailStyle } from '../../shared/types'
 import type { LeadDoc } from '../leads/models'
 import type { SendOutcome } from '../email/sender'
 import { EmailSend } from './models'
 import { generateRid, hashRid } from './rid'
 import { campaignFor, templateIdFor } from './landing-url'
-import { audienceForLead } from '../email/audience'
+import { NoTemplateError } from '../email/sender'
 import { resolveTemplate, type ResolvedTemplate } from '../email/template-store'
 
 export type BeginTrackedSendInput = {
@@ -32,9 +31,11 @@ export type BeginTrackedSendInput = {
   template?: ResolvedTemplate
   /** Keeps a follow-up on the template that opened the sequence. */
   preferTemplateId?: string | null
+  /** A one-off email: nothing in the library owns this send. */
+  oneOff?: boolean
   recipient: string
-  style: EmailStyle
-  followupNumber: 0 | 1 | 2
+  /** 0 = initial send, 1..5 = follow-ups. */
+  followupNumber: number
 }
 
 /**
@@ -53,8 +54,7 @@ export function buildSendRecord(
     language: input.lead.language,
     market_scope: input.lead.market_scope,
     campaign: campaignFor(String(input.lead.market_scope)),
-    style: input.style,
-    template_id: templateId ?? templateIdFor(input.style, input.followupNumber, audienceForLead(input.lead)),
+    template_id: templateId ?? 'unresolved',
     variant: null,
     followup: input.followupNumber,
     attempt: input.followupNumber + 1,
@@ -70,7 +70,7 @@ export type TrackedSend = {
   sendId: string
   campaign: string
   /** The template this send is committed to — hand it to sendLeadEmail. */
-  template: ResolvedTemplate
+  template: ResolvedTemplate | null
 }
 
 /**
@@ -80,18 +80,16 @@ export type TrackedSend = {
  */
 export async function beginTrackedSend(input: BeginTrackedSendInput): Promise<TrackedSend> {
   const rid = generateRid()
-  const template =
-    input.template ??
-    (await resolveTemplate(input.lead, {
-      language: String(input.lead.language ?? 'en'),
-      style: input.style,
-      followupNumber: input.followupNumber,
-      preferTemplateId: input.preferTemplateId ?? null,
-    }))
-  const templateId =
-    template.kind === 'custom'
-      ? `custom_${template.id}${input.followupNumber > 0 ? `_followup_${input.followupNumber}` : ''}`
-      : templateIdFor(input.style, input.followupNumber, template.audience)
+  const template = input.oneOff
+    ? null
+    : (input.template ??
+      (await resolveTemplate(input.lead, {
+        language: String(input.lead.language ?? 'en'),
+        followupNumber: input.followupNumber,
+        preferTemplateId: input.preferTemplateId ?? null,
+      })))
+  if (!template && !input.oneOff) throw new NoTemplateError(String(input.lead.language ?? 'en'))
+  const templateId = template ? templateIdFor(template.id, input.followupNumber) : 'one_off'
   const record = buildSendRecord(input, hashRid(rid), templateId)
   const doc = await EmailSend.create(record)
   return { rid, sendId: String(doc._id), campaign: String(record.campaign), template }
@@ -134,7 +132,6 @@ export async function backfillUntrackedSends(
     name: string
     language: string
     market_scope: string
-    email_style?: string | null
     approved_at?: Date | null
     contact?: { selected_email?: string | null } | null
     delivery?: {
@@ -170,11 +167,10 @@ export async function backfillUntrackedSends(
     const rows: Array<Record<string, unknown>> = []
     for (let i = 0; i < count; i++) {
       const isLast = i === count - 1
-      const style: EmailStyle = i > 0 ? 'note' : ((lead.delivery?.style as EmailStyle) ?? (lead.email_style as EmailStyle) ?? 'note')
       rows.push({
         ...base,
-        style,
-        template_id: templateIdFor(style, i),
+        // Sent before templates were tracked: there is no id to attribute to.
+        template_id: 'legacy',
         variant: lead.outreach?.variants?.[i] ?? null,
         followup: i,
         attempt: i + 1,
@@ -189,12 +185,10 @@ export async function backfillUntrackedSends(
       })
     }
     if (failed) {
-      const followup = Math.min(2, Math.max(0, lead.delivery?.followup ?? 0)) as 0 | 1 | 2
-      const style: EmailStyle = (lead.delivery?.style as EmailStyle) ?? 'note'
+      const followup = Math.min(5, Math.max(0, lead.delivery?.followup ?? 0))
       rows.push({
         ...base,
-        style,
-        template_id: templateIdFor(style, followup),
+        template_id: 'legacy',
         variant: lead.delivery?.subject_variant ?? null,
         followup,
         attempt: followup + 1,

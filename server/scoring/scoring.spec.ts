@@ -1,10 +1,10 @@
 /**
  * PARITY SUITE — ported from:
- *   brandstash-app/api/src/gbp/services/gbp-rules-analysis.service.spec.ts
+ *   the product’s rules engine
  *
  * Same representative inputs, same expected statuses/scores. If a change here
- * (or in server/scoring/) diverges from the Brandstash source, the lead-finder
- * score no longer matches the Brandstash business score — fix the port, not
+ * (or in server/scoring/) diverges from the source, the lead-finder
+ * score no longer matches the the profile score — fix the port, not
  * the expectations.
  */
 
@@ -49,7 +49,7 @@ function getCategory(result: RulesAnalysisResult, key: string) {
   return c
 }
 
-describe('analyzePlaceProfile (Brandstash rules parity)', () => {
+describe('analyzePlaceProfile (rules parity)', () => {
   describe('shape & engine metadata', () => {
     it('returns rules engine metadata and the 8 categories in order', () => {
       const result = analyzePlaceProfile(makeSummary())

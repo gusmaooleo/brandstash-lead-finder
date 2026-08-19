@@ -1,6 +1,6 @@
 /**
  * VERBATIM PORT of:
- *   brandstash-app/api/src/gbp/description-analysis/description-context.ts
+ *   the product’s rules engine
  *
  * Builds the shared `DescriptionContext` once per analysis. Pure +
  * deterministic. Niche keywords come from `briefing.keywords` when present;

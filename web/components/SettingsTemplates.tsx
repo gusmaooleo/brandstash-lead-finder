@@ -12,7 +12,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   deleteTemplate as deleteTemplateApi,
   previewStoredTemplate,
-  previewTemplate,
   updateTemplate,
   type EmailTemplate,
   type TemplateLibrary,
@@ -21,7 +20,8 @@ import { CategoryPicker } from './CategoryPicker'
 import { GmailFrame } from './GmailFrame'
 import { Button, Chip, Input, Select, langLabel } from './ui'
 
-const FOLLOWUP_LABEL = ['Initial email', 'Follow-up 1 · bump', 'Follow-up 2 · breakup']
+/** The sequence is as long as the follow-up setting allows. */
+const stepLabel = (followup: number): string => (followup === 0 ? 'Initial email' : `Follow-up ${followup}`)
 
 function CategorySummary({ categories }: { categories: string[] }) {
   if (!categories.length) return <Chip>every category</Chip>
@@ -87,29 +87,22 @@ export function TemplatesTab({
     const done = (r: { subject: string; html: string }) => !cancelled && setPreview(r)
     const fail = () => !cancelled && setPreview(null)
 
-    if (draft.kind === 'custom') {
-      const message = draft.messages[previewIndex]
-      if (!message) {
-        fail()
-        return
-      }
-      void previewTemplate({
-        subject: message.subject,
-        html: message.html,
-        language: draft.language ?? 'en',
-        assets: draft.generation?.assets ?? [],
-      })
-        .then(done)
-        .catch(fail)
-    } else {
-      void previewStoredTemplate(draft._id, { lang: previewLang, followup: previewIndex })
-        .then(done)
-        .catch(fail)
-    }
+    void previewStoredTemplate(draft._id, { lang: previewLang, followup: previewIndex })
+      .then(done)
+      .catch(fail)
     return () => {
       cancelled = true
     }
   }, [draft, previewIndex, previewLang])
+
+  /** Edits one variant of one step, keeping the rest of the draft untouched. */
+  const patchVariant = (messageIndex: number, variantIndex: number, patch: { subject?: string; html?: string }) => {
+    if (!draft) return
+    const messages = draft.messages.map((m, i) =>
+      i !== messageIndex ? m : { ...m, variants: m.variants.map((v, j) => (j === variantIndex ? { ...v, ...patch } : v)) },
+    )
+    setDraft({ ...draft, messages })
+  }
 
   const save = async () => {
     if (!draft) return
@@ -124,7 +117,7 @@ export function TemplatesTab({
         language: draft.language ?? undefined,
         priority: draft.priority,
         notes: draft.notes,
-        ...(draft.kind === 'custom' ? { messages: draft.messages } : {}),
+        messages: draft.messages,
       })
       await onChanged()
       setOpenId(null)
@@ -178,11 +171,10 @@ export function TemplatesTab({
                     <span className={`truncate text-[13.5px] font-medium ${t.active ? 'text-ink' : 'text-gray-3'}`}>
                       {t.name}
                     </span>
-                    {t.kind === 'builtin' ? <Chip>built-in</Chip> : <Chip className="tint-warn">custom</Chip>}
                     {t.language && <Chip>{langLabel(t.language)}</Chip>}
                   </span>
                   <span className="mt-1 flex items-center gap-2 text-[11.5px] text-gray-3">
-                    {t.audience} · {t.messages.length || 3} message{(t.messages.length || 3) === 1 ? '' : 's'}
+                    {t.audience} · {t.messages.length} message{t.messages.length === 1 ? '' : 's'}
                   </span>
                 </button>
                 <CategorySummary categories={t.categories} />
@@ -219,7 +211,6 @@ export function TemplatesTab({
                         <span className="text-[11.5px] text-gray-2">Audience label</span>
                         <Input
                           value={draft.audience}
-                          disabled={draft.kind === 'builtin'}
                           onChange={(e) => setDraft({ ...draft, audience: e.target.value })}
                         />
                       </label>
@@ -227,10 +218,8 @@ export function TemplatesTab({
                         <span className="text-[11.5px] text-gray-2">Language</span>
                         <Select
                           value={draft.language ?? ''}
-                          disabled={draft.kind === 'builtin'}
                           onChange={(e) => setDraft({ ...draft, language: e.target.value })}
                         >
-                          {draft.kind === 'builtin' && <option value="">all 10 languages</option>}
                           {library.languages.map((l) => (
                             <option key={l} value={l}>
                               {langLabel(l)}
@@ -240,62 +229,53 @@ export function TemplatesTab({
                       </label>
                     </div>
 
-                    {draft.kind === 'builtin' ? (
-                      <p className="rounded-xl border border-line bg-paper-2 px-3.5 py-2.5 text-[11.5px] text-gray-2">
-                        {draft.notes} The text lives in code, hand-localized in 10 languages — retarget or disable it
-                        here, edit it in a custom template.
-                      </p>
-                    ) : (
-                      <div className="grid gap-2">
-                        {draft.messages.map((m, i) => (
-                          <details key={m.followup} open={i === previewIndex} className="rounded-xl border border-line bg-card">
-                            <summary
-                              className="cursor-pointer px-3.5 py-2 text-[12px] text-gray-1"
-                              onClick={() => setPreviewIndex(i)}
-                            >
-                              {FOLLOWUP_LABEL[m.followup] ?? `Message ${m.followup}`}
-                            </summary>
-                            <div className="grid gap-2 px-3.5 pb-3.5">
-                              <Input
-                                value={m.subject}
-                                placeholder="Subject"
-                                onChange={(e) => {
-                                  const messages = [...draft.messages]
-                                  messages[i] = { ...m, subject: e.target.value }
-                                  setDraft({ ...draft, messages })
-                                }}
-                              />
-                              <textarea
-                                className="h-56 w-full rounded-lg border border-line bg-paper-2 px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-ink outline-none focus:border-line-2"
-                                value={m.html}
-                                spellCheck={false}
-                                onChange={(e) => {
-                                  const messages = [...draft.messages]
-                                  messages[i] = { ...m, html: e.target.value }
-                                  setDraft({ ...draft, messages })
-                                }}
-                              />
-                            </div>
-                          </details>
-                        ))}
-                      </div>
-                    )}
+                    <div className="grid gap-2">
+                      {draft.messages.map((m, i) => (
+                        <details key={m.followup} open={i === previewIndex} className="rounded-xl border border-line bg-card">
+                          <summary
+                            className="cursor-pointer px-3.5 py-2 text-[12px] text-gray-1"
+                            onClick={() => setPreviewIndex(i)}
+                          >
+                            {stepLabel(m.followup)} · {m.variants.length} variant{m.variants.length === 1 ? '' : 's'}
+                          </summary>
+                          <div className="grid gap-3 px-3.5 pb-3.5">
+                            {m.variants.map((v, vi) => (
+                              <div key={vi} className="grid gap-2 rounded-lg border border-line bg-paper-2 p-2.5">
+                                <span className="text-[10.5px] uppercase tracking-wide text-gray-3">
+                                  Variant {vi + 1}
+                                  {v.band ? ` · ${v.band === 'low' ? 'low score' : 'strong profile'}` : ''}
+                                </span>
+                                <Input
+                                  value={v.subject}
+                                  placeholder="Subject"
+                                  onChange={(e) => patchVariant(i, vi, { subject: e.target.value })}
+                                />
+                                <textarea
+                                  className="h-56 w-full rounded-lg border border-line bg-card px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-ink outline-none focus:border-line-2"
+                                  value={v.html}
+                                  spellCheck={false}
+                                  onChange={(e) => patchVariant(i, vi, { html: e.target.value })}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ))}
+                    </div>
 
                     <div className="flex items-center gap-2">
                       <Button variant="green" disabled={!dirty || saving} onClick={save}>
                         {saving ? 'Saving…' : 'Save template'}
                       </Button>
-                      {draft.kind === 'custom' && (
-                        <Button variant="danger" className="!px-3 !py-1.5 !text-[12px]" onClick={() => void remove(draft)}>
-                          Delete
-                        </Button>
-                      )}
+                      <Button variant="danger" className="!px-3 !py-1.5 !text-[12px]" onClick={() => void remove(draft)}>
+                        Delete
+                      </Button>
                     </div>
                   </div>
 
                   <div className="min-w-0">
                     <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                      {(draft.kind === 'custom' ? draft.messages.map((m) => m.followup) : [0, 1, 2]).map((f, i) => (
+                      {draft.messages.map((m) => m.followup).map((f, i) => (
                         <button
                           key={f}
                           onClick={() => setPreviewIndex(i)}
@@ -305,22 +285,20 @@ export function TemplatesTab({
                               : 'border-line bg-paper-2 text-gray-2 hover:text-ink'
                           }`}
                         >
-                          {FOLLOWUP_LABEL[f] ?? `Message ${f}`}
+                          {stepLabel(f)}
                         </button>
                       ))}
-                      {draft.kind === 'builtin' && (
-                        <Select
-                          className="ml-auto !py-1 !text-[11.5px]"
-                          value={previewLang}
-                          onChange={(e) => setPreviewLang(e.target.value)}
-                        >
-                          {library.languages.map((l) => (
-                            <option key={l} value={l}>
-                              {langLabel(l)}
-                            </option>
-                          ))}
-                        </Select>
-                      )}
+                      <Select
+                        className="ml-auto !py-1 !text-[11.5px]"
+                        value={previewLang}
+                        onChange={(e) => setPreviewLang(e.target.value)}
+                      >
+                        {library.languages.map((l) => (
+                          <option key={l} value={l}>
+                            {langLabel(l)}
+                          </option>
+                        ))}
+                      </Select>
                     </div>
                     {preview ? (
                       <GmailFrame

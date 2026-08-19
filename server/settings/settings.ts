@@ -30,6 +30,12 @@ export type RuntimeSettings = {
     smtpUser: string
     smtpPass: string
     unsubscribeBaseUrl: string
+    /**
+     * The disclosure block appended when a template carries no unsubscribe
+     * link. Yours to word — may use {{unsubscribe_url}}. Empty = the bare
+     * link goes out on its own, because a way out is never optional.
+     */
+    footerHtml: string
   }
   offer: {
     brandName: string
@@ -43,6 +49,8 @@ export type RuntimeSettings = {
   leadsPerHour: number
   leadRetentionDays: number
   followupAfterDays: number
+  /** Follow-ups after the initial email: 1–5. */
+  followupSteps: number
   landing: { mongodbUri: string; dbName: string }
 }
 
@@ -55,15 +63,15 @@ export function addressLabel(name: string, email: string): string {
 }
 
 /**
- * What the app ships with: Brandstash's own offer. Everything here is editable
- * in Settings → Offer — nothing else in the code names a company.
+ * A fresh install ships with NO offer: the brand, the pitch, the site and the
+ * logo are the operator's own and are entered in Settings → Offer. Nothing
+ * here names a company.
  */
 const DEFAULT_OFFER = {
-  brandName: 'Brandstash',
-  whatWeSell:
-    "Brandstash keeps a business's Google Business Profile alive automatically: fresh photos, correct hours, posts, review replies — the recurring work that decides who shows up first in local search. For agencies, the same thing at scale: every client's profile kept updated from one dashboard, so they can offer it without hiring for it.",
-  siteUrl: 'https://www.brandstash.ai',
-  logoUrl: 'https://pub-62b9434b63214cb4b5b74cebb8d4c261.r2.dev/content/brandstash-icon-black.svg',
+  brandName: '',
+  whatWeSell: '',
+  siteUrl: '',
+  logoUrl: '',
   useAnalysisInCopy: true,
 }
 
@@ -87,6 +95,7 @@ function toSnapshot(doc: AppSettingsDoc): RuntimeSettings {
       smtpUser: e?.smtp_user ?? '',
       smtpPass: tryDecrypt(e?.smtp_pass_enc) ?? '',
       unsubscribeBaseUrl: (e?.unsubscribe_base_url ?? 'http://localhost:4000').replace(/\/$/, ''),
+      footerHtml: e?.footer_html ?? '',
     },
     offer: {
       brandName: doc.offer?.brand_name || DEFAULT_OFFER.brandName,
@@ -100,6 +109,7 @@ function toSnapshot(doc: AppSettingsDoc): RuntimeSettings {
     leadsPerHour: doc.discovery?.leads_per_hour ?? 10,
     leadRetentionDays: doc.discovery?.lead_retention_days ?? 45,
     followupAfterDays: doc.discovery?.followup_after_days ?? 3,
+    followupSteps: Math.min(5, Math.max(1, doc.discovery?.followup_steps ?? 2)),
     landing: {
       mongodbUri: tryDecrypt(doc.landing?.mongodb_uri_enc) ?? '',
       dbName: doc.landing?.db_name ?? 'brandstash_leads',
@@ -134,7 +144,7 @@ export function settings(): RuntimeSettings {
 const EMPTY_SETTINGS: RuntimeSettings = {
   email: {
     mode: 'dry_run',
-    from: { name: 'Brandstash', email: '', label: '' },
+    from: { name: '', email: '', label: '' },
     replyTo: { name: '', email: '', label: '' },
     resendKey: '',
     smtpHost: '',
@@ -143,6 +153,7 @@ const EMPTY_SETTINGS: RuntimeSettings = {
     smtpUser: '',
     smtpPass: '',
     unsubscribeBaseUrl: 'http://localhost:4000',
+    footerHtml: '',
   },
   offer: { ...DEFAULT_OFFER },
   ai: { anthropicKey: '', model: '' },
@@ -150,6 +161,7 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   leadsPerHour: 10,
   leadRetentionDays: 45,
   followupAfterDays: 3,
+  followupSteps: 2,
   landing: { mongodbUri: '', dbName: 'brandstash_leads' },
 }
 
@@ -190,6 +202,7 @@ export type SettingsView = {
     smtp_user: string
     smtp_pass_masked: string | null
     unsubscribe_base_url: string
+    footer_html: string
   }
   offer: {
     brand_name: string
@@ -200,7 +213,7 @@ export type SettingsView = {
   }
   ai: { anthropic_key_masked: string | null; model: string }
   places: { api_key_masked: string | null }
-  discovery: { leads_per_hour: number; lead_retention_days: number; followup_after_days: number }
+  discovery: { leads_per_hour: number; lead_retention_days: number; followup_after_days: number; followup_steps: number }
   landing: { mongodb_uri_masked: string | null; db_name: string }
   /** False = secrets cannot be stored; the UI must say so instead of failing. */
   encryption_ready: boolean
@@ -224,6 +237,7 @@ export function settingsView(): SettingsView {
       smtp_user: s.email.smtpUser,
       smtp_pass_masked: maskSecret(s.email.smtpPass || null),
       unsubscribe_base_url: s.email.unsubscribeBaseUrl,
+      footer_html: s.email.footerHtml,
     },
     offer: {
       brand_name: s.offer.brandName,
@@ -238,6 +252,7 @@ export function settingsView(): SettingsView {
       leads_per_hour: s.leadsPerHour,
       lead_retention_days: s.leadRetentionDays,
       followup_after_days: s.followupAfterDays,
+      followup_steps: s.followupSteps,
     },
     landing: { mongodb_uri_masked: maskSecret(s.landing.mongodbUri || null), db_name: s.landing.dbName },
     encryption_ready: hasEncryptionKey(),
@@ -261,6 +276,7 @@ export type SettingsPatch = {
     smtp_user: string
     smtp_pass: SecretInput
     unsubscribe_base_url: string
+    footer_html: string
   }>
   offer?: Partial<{
     brand_name: string
@@ -271,7 +287,7 @@ export type SettingsPatch = {
   }>
   ai?: Partial<{ anthropic_key: SecretInput; model: string }>
   places?: Partial<{ api_key: SecretInput }>
-  discovery?: Partial<{ leads_per_hour: number; lead_retention_days: number; followup_after_days: number }>
+  discovery?: Partial<{ leads_per_hour: number; lead_retention_days: number; followup_after_days: number; followup_steps: number }>
   landing?: Partial<{ mongodb_uri: SecretInput; db_name: string }>
 }
 
@@ -304,6 +320,7 @@ export async function updateSettings(patch: SettingsPatch): Promise<RuntimeSetti
     if (e.smtp_port !== undefined) $set['email.smtp_port'] = POSITIVE_INT(e.smtp_port, current.email.smtpPort)
     if (e.smtp_secure !== undefined) $set['email.smtp_secure'] = Boolean(e.smtp_secure)
     if (e.smtp_user !== undefined) $set['email.smtp_user'] = String(e.smtp_user).trim()
+    if (e.footer_html !== undefined) $set['email.footer_html'] = String(e.footer_html)
     if (e.unsubscribe_base_url !== undefined) {
       $set['email.unsubscribe_base_url'] = String(e.unsubscribe_base_url).trim().replace(/\/$/, '')
     }
@@ -334,6 +351,9 @@ export async function updateSettings(patch: SettingsPatch): Promise<RuntimeSetti
     }
     if (d.lead_retention_days !== undefined) {
       $set['discovery.lead_retention_days'] = POSITIVE_INT(d.lead_retention_days, current.leadRetentionDays)
+    }
+    if (d.followup_steps !== undefined) {
+      $set['discovery.followup_steps'] = Math.min(5, Math.max(1, POSITIVE_INT(d.followup_steps, current.followupSteps)))
     }
     if (d.followup_after_days !== undefined) {
       $set['discovery.followup_after_days'] = POSITIVE_INT(d.followup_after_days, current.followupAfterDays)

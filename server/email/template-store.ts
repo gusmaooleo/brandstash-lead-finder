@@ -1,83 +1,44 @@
 /**
- * Which template a lead gets, and the seed that puts the coded packs in the
- * database so they can be retargeted from the UI.
+ * WHICH template a lead gets.
  *
- * Resolution (active templates only):
- *   1. every template whose `categories` contain one of the lead's category
- *      keys — the searched catalog name AND the Places primaryType, both as
- *      slugs (see audience.ts);
- *   2. a custom template must also match the lead's language;
+ * Every template is a document (email/template-models.ts); nothing is coded.
+ * Resolution, over active templates that carry the step being sent:
+ *   1. the template's language must match the lead's;
+ *   2. templates whose `categories` contain one of the lead's category keys —
+ *      the searched catalog name AND the Places primaryType, both as slugs
+ *      (see category-match.ts);
  *   3. the most SPECIFIC match wins (fewest categories), then the lowest
  *      `priority`, then the most recently updated;
- *   4. nothing matched → the generic template (empty `categories`) for that
- *      audience, i.e. today's business-owner pack.
+ *   4. nothing matched → the generic template (empty `categories`);
+ *   5. nothing at all → null. The caller must say "no template" rather than
+ *      invent one: an empty library is a state the UI shows, not an error.
+ *
+ * Whatever the rules pick is only a SUGGESTION: the lead screen may send with
+ * any template in the library, category restrictions included.
  *
  * The list is cached in memory (templates change from one screen, rarely) and
  * invalidated on every write.
  */
 
 import { EmailTemplate, type EmailTemplateDoc } from './template-models'
-import { AGENCY_CATEGORIES, categorySlug, leadCategoryKeys, type OutreachAudience } from './audience'
+import { categorySlug, leadCategoryKeys } from './category-match'
+import type { FindingPhrases } from './findings'
+import type { RenderableVariant } from './template-render'
 
-export type ResolvedTemplate =
-  | { kind: 'builtin'; pack: 'business_note' | 'agency_note' | 'dashboard'; audience: OutreachAudience; id: string | null; name: string }
-  | { kind: 'custom'; id: string; name: string; audience: string; messages: TemplateMessage[] }
+export type TemplateMessage = { followup: number; variants: RenderableVariant[] }
 
-export type TemplateMessage = { followup: number; subject: string; html: string; text: string | null }
-
-export const BUILTIN_BUSINESS_NOTE = 'Business owners — personal note'
-export const BUILTIN_AGENCY_NOTE = 'Marketing agencies — multi-client panel'
-export const BUILTIN_DASHBOARD = 'Business owners — dashboard report'
-
-/** The coded packs and, for each, the audience rule that decides who gets it. */
-export const BUILTIN_DEFINITIONS = [
-  {
-    name: BUILTIN_BUSINESS_NOTE,
-    builtin_pack: 'business_note' as const,
-    audience: 'business',
-    categories: [] as readonly string[],
-    priority: 100,
-    notes: 'The original hand-written note, localized in 10 languages. Generic: every category with no template of its own.',
-  },
-  {
-    name: BUILTIN_DASHBOARD,
-    builtin_pack: 'dashboard' as const,
-    audience: 'business',
-    categories: [] as readonly string[],
-    priority: 110,
-    notes: 'The visual profile report. Used only for leads whose email style is "dashboard".',
-  },
-  {
-    name: BUILTIN_AGENCY_NOTE,
-    builtin_pack: 'agency_note' as const,
-    audience: 'agency',
-    categories: AGENCY_CATEGORIES,
-    priority: 10,
-    notes: 'Multi-client panel pitch: free client audit / demo / partner terms, plus the two follow-ups.',
-  },
-]
-
-/**
- * Puts the coded packs in the collection the first time the app runs against a
- * database that has none, and keeps their targeting in step afterwards.
- * Their copy, name and active flag are never overwritten.
- */
-export async function seedBuiltinTemplates(): Promise<void> {
-  for (const b of BUILTIN_DEFINITIONS) {
-    await EmailTemplate.updateOne(
-      { kind: 'builtin', builtin_pack: b.builtin_pack },
-      { $setOnInsert: { ...b, categories: [...b.categories], kind: 'builtin', active: true, messages: [], generation: null } },
-      { upsert: true },
-    )
-    // Who a pack is FOR is a coded rule (audience.ts), not a one-time copy
-    // into the row: an existing database must pick up categories added since
-    // it was seeded. The owner's own targeting is never touched.
-    await EmailTemplate.updateOne(
-      { kind: 'builtin', builtin_pack: b.builtin_pack, categories_customized: { $ne: true } },
-      { $set: { categories: [...b.categories] } },
-    )
-  }
-  invalidateTemplates()
+export type ResolvedTemplate = {
+  id: string
+  name: string
+  audience: string
+  language: string | null
+  /** Narrow the variant pick by the lead's score band. */
+  lowScoreVariants: boolean
+  findings: FindingPhrases
+  /** The template's own words for category names and opportunities. */
+  strings: Record<string, string>
+  assets: string[]
+  messages: TemplateMessage[]
 }
 
 let cache: EmailTemplateDoc[] | null = null
@@ -90,7 +51,7 @@ export function invalidateTemplates(): void {
  * Test seam — fills the cache without a database, so the resolution rules can
  * be exercised directly. Production code never calls this.
  */
-export function setTemplatesForTests(docs: Array<Partial<EmailTemplateDoc> & { name: string; kind: string }>): void {
+export function setTemplatesForTests(docs: Array<Partial<EmailTemplateDoc> & { name: string }>): void {
   cache = docs as unknown as EmailTemplateDoc[]
 }
 
@@ -111,97 +72,84 @@ function categoryMatch(template: EmailTemplateDoc, keys: string[]): boolean {
   return keys.some((key) => slugs.has(key))
 }
 
-/**
- * The template for this send. `style` only matters for the builtin business
- * pack, where the owner can choose the dashboard format per lead.
- */
+function hasStep(doc: EmailTemplateDoc, followupNumber: number): boolean {
+  return (doc.messages ?? []).some((m) => m.followup === followupNumber && (m.variants?.length ?? 0) > 0)
+}
+
+export type ResolveOptions = {
+  language: string
+  followupNumber?: number
+  /**
+   * The template that sent message 1 of this sequence. A follow-up sticks to
+   * it while it is still active and still carries the step, so retargeting the
+   * library never splits a lead's sequence across two voices.
+   */
+  preferTemplateId?: string | null
+}
+
 export async function resolveTemplate(
   lead: TemplateLead,
-  opts: {
-    language: string
-    style?: 'note' | 'dashboard'
-    followupNumber?: number
-    /**
-     * The template that sent message 1 of this sequence. A follow-up sticks to
-     * it while it is still active, so retargeting the library never splits a
-     * lead's sequence across two voices.
-     */
-    preferTemplateId?: string | null
-  } = { language: 'en' },
-): Promise<ResolvedTemplate> {
-  const templates = (await loadTemplates()).filter((t) => t.active)
+  opts: ResolveOptions = { language: 'en' },
+): Promise<ResolvedTemplate | null> {
+  const step = opts.followupNumber ?? 0
+  const templates = (await loadTemplates()).filter((t) => t.active && hasStep(t, step))
   const keys = leadCategoryKeys(lead)
 
   if (opts.preferTemplateId) {
     const sticky = templates.find((t) => String(t._id) === opts.preferTemplateId)
-    if (sticky) return resolvedFromDoc(sticky, opts)
+    if (sticky) return resolvedFromDoc(sticky)
   }
 
-  const specific = templates
+  const eligible = templates.filter((t) => !t.language || t.language === opts.language)
+  const specific = eligible
     .filter((t) => categoryMatch(t, keys))
-    .filter((t) => t.kind !== 'custom' || !t.language || t.language === opts.language)
     .sort(
       (a, b) =>
         (a.categories?.length ?? 0) - (b.categories?.length ?? 0) ||
         (a.priority ?? 0) - (b.priority ?? 0) ||
         Number(b.updated_at ?? 0) - Number(a.updated_at ?? 0),
     )
+  const chosen = specific[0] ?? eligible.find((t) => !t.categories?.length)
+  return chosen ? resolvedFromDoc(chosen) : null
+}
 
-  const chosen = specific[0]
-  if (chosen) return resolvedFromDoc(chosen, opts)
+/** Every template the lead screen may offer, suggestion first. */
+export async function templateOptionsFor(
+  lead: TemplateLead,
+  opts: ResolveOptions,
+): Promise<{ suggestedId: string | null; templates: EmailTemplateDoc[] }> {
+  const suggestion = await resolveTemplate(lead, opts)
+  const all = (await loadTemplates()).filter((t) => t.active)
+  return { suggestedId: suggestion?.id ?? null, templates: all }
+}
 
-  // Generic fallback: the dashboard report when that's the lead's style,
-  // otherwise the business note. Both are the coded packs.
-  const wantsDashboard = opts.style === 'dashboard' && (opts.followupNumber ?? 0) === 0
-  const generic = templates.find(
-    (t) =>
-      !t.categories?.length &&
-      t.kind === 'builtin' &&
-      t.builtin_pack === (wantsDashboard ? 'dashboard' : 'business_note'),
-  )
-  if (generic) return resolvedFromDoc(generic, opts)
-  return {
-    kind: 'builtin',
-    pack: wantsDashboard ? 'dashboard' : 'business_note',
-    audience: 'business',
-    id: null,
-    name: wantsDashboard ? BUILTIN_DASHBOARD : BUILTIN_BUSINESS_NOTE,
-  }
+export async function templateById(id: string): Promise<ResolvedTemplate | null> {
+  const doc = (await loadTemplates()).find((t) => String(t._id) === id)
+  return doc ? resolvedFromDoc(doc) : null
 }
 
 /** The runtime shape of one stored template — also used by the preview API. */
-export function resolvedFromDoc(
-  doc: EmailTemplateDoc,
-  opts: { style?: 'note' | 'dashboard'; followupNumber?: number },
-): ResolvedTemplate {
-  if (doc.kind === 'custom') {
-    const messages = (doc.messages ?? []).map((m) => ({
-      followup: m.followup,
-      subject: m.subject,
-      html: m.html,
-      text: m.text ?? null,
-    }))
-    // A custom template that has no copy for this follow-up hands the send
-    // back to the coded pack of the same audience instead of guessing.
-    const wanted = opts.followupNumber ?? 0
-    if (!messages.some((m) => m.followup === wanted)) {
-      const audience: OutreachAudience = doc.audience === 'agency' ? 'agency' : 'business'
-      return {
-        kind: 'builtin',
-        pack: audience === 'agency' ? 'agency_note' : 'business_note',
-        audience,
-        id: String(doc._id),
-        name: doc.name,
-      }
-    }
-    return { kind: 'custom', id: String(doc._id), name: doc.name, audience: doc.audience ?? 'custom', messages }
-  }
-  const pack = (doc.builtin_pack ?? 'business_note') as 'business_note' | 'agency_note' | 'dashboard'
+export function resolvedFromDoc(doc: EmailTemplateDoc): ResolvedTemplate {
+  const strings = doc.strings instanceof Map ? Object.fromEntries(doc.strings) : ((doc.strings ?? {}) as Record<string, string>)
   return {
-    kind: 'builtin',
-    pack,
-    audience: pack === 'agency_note' ? 'agency' : 'business',
     id: String(doc._id),
     name: doc.name,
+    audience: doc.audience ?? 'custom',
+    language: doc.language ?? null,
+    lowScoreVariants: Boolean(doc.low_score_variants),
+    findings: (doc.findings ?? {}) as FindingPhrases,
+    strings,
+    assets: [...(doc.assets ?? [])],
+    messages: (doc.messages ?? []).map((m) => ({
+      followup: m.followup,
+      variants: (m.variants ?? []).map((v) => ({
+        subject: v.subject,
+        html: v.html,
+        text: v.text ?? null,
+        preheader: v.preheader ?? '',
+        band: v.band ?? null,
+        needs_rating: Boolean(v.needs_rating),
+      })),
+    })),
   }
 }

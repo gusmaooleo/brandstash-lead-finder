@@ -39,6 +39,14 @@ const templateVariantSchema = new Schema(
      * null = fits any band.
      */
     band: { type: String, default: null, enum: VARIANT_BANDS },
+    /** This angle names the lead's rating, so an unrated lead can't get it. */
+    needs_rating: { type: Boolean, default: false },
+    /**
+     * The hidden line mail clients show next to the subject. Tokens are
+     * resolved and the result is trimmed to the preview length, which is why
+     * it is a field and not markup: only the renderer knows the final text.
+     */
+    preheader: { type: String, default: '' },
   },
   { _id: false },
 )
@@ -103,6 +111,12 @@ const emailTemplateSchema = new Schema(
     low_score_variants: { type: Boolean, default: false },
     /** Image URLs this template may place — {{logo_url}}, {{asset_1}}…. */
     assets: { type: [String], default: [] },
+    /**
+     * The template's own dictionary: how IT names each analysis category
+     * ('fotos' → "Photos") and how IT phrases each opportunity
+     * ('fotos_ausente' → "Add photos…"). Keeps every word out of the code.
+     */
+    strings: { type: Map, of: String, default: () => new Map() },
     generation: { type: generationSchema, default: null },
     notes: { type: String, default: '' },
   },

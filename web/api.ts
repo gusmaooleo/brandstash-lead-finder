@@ -1,6 +1,6 @@
 /** Typed fetch helpers for the local API. */
 
-import type { AuditEvent, DiscoveryCounters, EmailLanguage, EmailStyle, GlobePoint, LeadContact, LeadDelivery, LeadOutreach, LeadStatus, MarketScope } from '../shared/types'
+import type { AuditEvent, DiscoveryCounters, EmailLanguage, GlobePoint, LeadContact, LeadDelivery, LeadOutreach, LeadStatus, MarketScope } from '../shared/types'
 
 export type Lead = {
   _id: string
@@ -21,9 +21,8 @@ export type Lead = {
   score: number
   location: { lat: number; lng: number } | null
   contact: LeadContact
-  email_style: EmailStyle
   status: LeadStatus
-  delivery: LeadDelivery & { style?: EmailStyle | null; followup?: number | null }
+  delivery: LeadDelivery & { followup?: number | null }
   outreach: LeadOutreach
   discovery: { query: string; city_label: string; discovered_at: string }
   approved_at: string | null
@@ -96,12 +95,12 @@ export type MarketInfo = {
 export type EmailPreview = {
   subject: string
   subject_variant: number
-  band: 'low' | 'high' | null
-  style: EmailStyle
   followup: number
-  language: EmailLanguage
+  language: string
   html: string
   text: string | null
+  template_id: string | null
+  template_name: string
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -198,29 +197,41 @@ export const saveSettings = (patch: AppSettingsPatch) =>
   request<AppSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) })
 /* ── email templates ─────────────────────────────────────────────────────── */
 
-export type TemplateMessage = { followup: number; subject: string; html: string; text?: string | null }
+export type TemplateVariant = {
+  subject: string
+  html: string
+  text?: string | null
+  preheader?: string | null
+  band?: 'low' | 'high' | null
+  needs_rating?: boolean
+}
+
+export type TemplateMessage = { followup: number; variants: TemplateVariant[] }
 
 export type EmailTemplate = {
   _id: string
   name: string
-  kind: 'builtin' | 'custom'
-  builtin_pack: 'business_note' | 'agency_note' | 'dashboard' | null
   audience: string
   categories: string[]
   language: string | null
   active: boolean
   priority: number
+  low_score_variants: boolean
+  assets: string[]
+  findings: Record<string, string>
+  strings: Record<string, string>
   messages: TemplateMessage[]
-  generation: { model: string | null; preset: string | null; brief: string | null; assets: string[]; at: string | null } | null
+  generation: { model: string | null; preset: string | null; brief: string | null; at: string | null } | null
   notes: string
   updated_at: string
 }
 
 export type TemplateLibrary = {
   templates: EmailTemplate[]
-  placeholders: Array<{ token: string; description: string }>
+  placeholders: Array<{ token: string; description: string; group: string }>
   presets: Array<{ id: string; label: string; description: string }>
   languages: string[]
+  max_followups: number
   model: string
   ai_ready: boolean
 }
@@ -232,10 +243,14 @@ export const createTemplate = (body: {
   categories?: string[]
   language?: string
   messages: TemplateMessage[]
-  generation?: { model?: string; preset?: string; brief?: string; assets?: string[] } | null
+  findings?: Record<string, string>
+  strings?: Record<string, string>
+  assets?: string[]
+  low_score_variants?: boolean
+  generation?: { model?: string; preset?: string; brief?: string } | null
   notes?: string
 }) => request<{ template: EmailTemplate }>('/api/templates', { method: 'POST', body: JSON.stringify(body) })
-export const updateTemplate = (id: string, body: Partial<Omit<EmailTemplate, '_id' | 'kind' | 'updated_at'>>) =>
+export const updateTemplate = (id: string, body: Partial<Omit<EmailTemplate, '_id' | 'updated_at'>>) =>
   request<{ template: EmailTemplate }>(`/api/templates/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteTemplate = (id: string) =>
   request<{ ok: true }>(`/api/templates/${id}`, { method: 'DELETE' })
@@ -250,13 +265,22 @@ export const previewStoredTemplate = (id: string, opts: { lang?: string; followu
     html: string
     text: string | null
     template_name: string
-    style: string
+    variant: number
     followup: number
     language: string
   }>(`/api/templates/${id}/preview${qs ? `?${qs}` : ''}`)
 }
 
-export const previewTemplate = (body: { subject: string; html: string; language?: string; assets?: string[] }) =>
+export const previewTemplate = (body: {
+  subject: string
+  html?: string
+  text?: string | null
+  preheader?: string | null
+  language?: string
+  assets?: string[]
+  findings?: Record<string, string>
+  strings?: Record<string, string>
+}) =>
   request<{ subject: string; html: string; text: string }>('/api/templates/preview', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -268,8 +292,16 @@ export const generateTemplate = (body: {
   audience: string
   categories: string[]
   assets: string[]
+  steps?: number
+  variants_per_step?: number
+  bands?: boolean
 }) =>
-  request<{ messages: TemplateMessage[]; model: string; preset: string; language: string }>(
+  request<{
+    messages: Array<{ followup: number; variants: Array<{ subject: string; html: string; preheader: string; band: 'low' | 'high' | null }> }>
+    model: string
+    preset: string
+    language: string
+  }>(
     '/api/templates/generate',
     { method: 'POST', body: JSON.stringify(body) },
   )
@@ -285,16 +317,33 @@ export const getLeads = (params: Record<string, string>) =>
     `/api/leads?${new URLSearchParams(params)}`,
   )
 export const getLead = (id: string) => request<{ source: string; lead: Lead; analysis: Analysis | null }>(`/api/leads/${id}`)
-export const getEmailPreview = (id: string, opts: { lang?: string; style?: EmailStyle; followup?: number } = {}) => {
+export const getEmailPreview = (id: string, opts: { lang?: string; template?: string; followup?: number } = {}) => {
   const params = new URLSearchParams()
   if (opts.lang) params.set('lang', opts.lang)
-  if (opts.style) params.set('style', opts.style)
+  if (opts.template) params.set('template', opts.template)
   if (opts.followup) params.set('followup', String(opts.followup))
   const qs = params.toString()
   return request<EmailPreview>(`/api/leads/${id}/email-preview${qs ? `?${qs}` : ''}`)
 }
-export const setEmailStyle = (id: string, style: EmailStyle) =>
-  request<{ ok: true }>(`/api/leads/${id}/email-style`, { method: 'PUT', body: JSON.stringify({ style }) })
+
+/** Preview a one-off email against THIS lead, without saving anything. */
+export const previewOneOff = (id: string, body: { subject: string; html?: string; text?: string }) =>
+  request<EmailPreview>(`/api/leads/${id}/email-preview`, { method: 'POST', body: JSON.stringify(body) })
+
+/** Every template this lead may be sent with — the resolved one flagged. */
+export type LeadTemplateOptions = {
+  suggested_id: string | null
+  chosen_id: string | null
+  max_followups: number
+  templates: Array<{ id: string; name: string; language: string | null; audience: string; categories: string[]; steps: number[] }>
+}
+export const getLeadTemplates = (id: string, followup = 0) =>
+  request<LeadTemplateOptions>(`/api/leads/${id}/templates?followup=${followup}`)
+export const chooseLeadTemplate = (id: string, templateId: string, followup = 0) =>
+  request<{ ok: true }>(`/api/leads/${id}/template`, {
+    method: 'PUT',
+    body: JSON.stringify({ template_id: templateId, followup }),
+  })
 export const sendFollowup = (id: string) =>
   request<{ ok: boolean; delivery: LeadDelivery }>(`/api/approved/${id}/followup`, { method: 'POST' })
 export const stopFollowups = (id: string) =>
@@ -329,7 +378,6 @@ export type EmailSendRow = {
   recipient: string
   language: string | null
   campaign: string | null
-  style: EmailStyle | null
   template_id: string | null
   variant: number | null
   followup: number
@@ -377,7 +425,7 @@ export type AnalyticsOverview = {
     queued_sends: number
   }
   timeseries: Array<{ day: string; sent: number; visited: number; rate: number }>
-  breakdowns: Record<'style' | 'template' | 'variant' | 'campaign' | 'attempt', BreakdownRow[]>
+  breakdowns: Record<'template' | 'variant' | 'campaign' | 'attempt', BreakdownRow[]>
   sync: {
     last_synced_at: string | null
     last_sync_ok: boolean | null

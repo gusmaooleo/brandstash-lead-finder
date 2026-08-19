@@ -13,7 +13,6 @@ import { startRetentionLoop } from './leads/retention'
 import { warnMailConfig } from './email/provider'
 import { loadSettings, settingsSummary } from './settings/settings'
 import { hasEncryptionKey } from './settings/crypto'
-import { seedBuiltinTemplates } from './email/template-store'
 import { startBounceSyncLoop } from './email/bounce-sync'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -31,8 +30,6 @@ async function main(): Promise<void> {
   }
   await loadSettings()
   warnMailConfig()
-  // The coded packs get a row each so they can be retargeted from Settings.
-  await seedBuiltinTemplates()
 
   const app = express()
   app.use(express.json())
@@ -47,7 +44,7 @@ async function main(): Promise<void> {
   app.use(express.static(webDist))
   app.get(/^\/(?!api|unsubscribe).*/, (_req, res) => {
     res.sendFile(path.join(webDist, 'index.html'), (err) => {
-      if (err) res.status(200).send('Brandstash Lead Finder API is running. UI dev server: http://localhost:4001')
+      if (err) res.status(200).send('Lead Finder API is running. UI dev server: http://localhost:4001')
     })
   })
 

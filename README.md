@@ -51,14 +51,14 @@ browser only ever receives masks:
 
 | Settings | What it holds |
 |---|---|
-| **Offer** | Brand name, site URL, logo and the "what you sell" paragraph — the app is not wired to one company. Also decides whether generated copy may lean on the built-in Google-profile analysis |
+| **Offer** | Brand name, site URL, logo and the "what you sell" paragraph — the app is not wired to one company. Also decides whether generated copy may lean on the Google-profile analysis |
 | **Claude** | Anthropic key + model (the dropdown lists what that key can actually use). Writes email templates in Settings → Generate |
 | **Google Places** | Places API (New) key, used server-side only |
 | **Landing database** | Read-only connection to the store where the landing writes `landing_visit_events` (Atlas in production). Empty = local-dev fallback to the lead finder's own Mongo |
 | **Discovery** | Leads per hour (discovery pauses when the window fills), follow-up delay, and how long a pending lead waits before being soft-archived (hidden, reopenable, never deleted) |
 | **Sender identity** | Name + address, concatenated into the `Name <email@domain>` both transports send. Reply-To optional |
 | **Delivery** | `dry_run` (renders/records, sends nothing), `resend` or `smtp` — one contract, two implementations (`server/email/provider.ts`). Resend retries carry an idempotency key, so a network hiccup can never double-send |
-| **Email templates** | Which copy each lead gets: generic, or bound to Google Business categories (most specific wins). Built-in packs ship localized in 10 languages; custom ones are written by Claude or by hand |
+| **Email templates** | Every email the app can send: written by hand or with Claude, in plain text or HTML, generic or bound to Google Business categories (most specific is suggested first) |
 
 ## How it works
 
@@ -119,17 +119,28 @@ events — `bounced` dead-lists the recipient, `complained` additionally suppres
 unsubscribe. Dead addresses are never offered again and every send is blocked against the
 registry right before delivery.
 
-**Email.** Two formats per lead, rendered in the lead's market language
-(en/pt/es/fr/de/it/zh-TW/zh-HK/ja/ko):
+**Email.** Every email comes from a template in the database — the app ships with none, and says
+so instead of offering a send that cannot work. A template is written by hand or drafted by
+Claude from a brief, in plain text or HTML, for one language, and may be bound to Google Business
+categories (the most specific match is suggested first; any template can still be picked by hand
+on the lead screen).
 
-- **Personal note (default)** — a short, plain-looking cold email (Arial, no images, multipart
-  with a text/plain alternative) that leads with 1–2 concrete findings pulled from the lead's
-  REAL public profile data (missing photos/hours/description, thin reviews). 3 variants per
-  language with different sales angles (findings / lost-customer / compliment ladder), picked
-  deterministically by Place-ID hash; every send records its variant. Footer carries the same
-  public-information disclaimer + unsubscribe as the dashboard email.
-- **Dashboard** — the visual Brandstash report (score ring, category bars, opportunities, CTA
-  card). Opt-in per lead via the style tab on the lead page.
+- **Variables.** The copy interpolates `{{tokens}}` — the lead (name, city, rating, reviews,
+  category, address, phone, website), the profile analysis (overall score, per-category scores and
+  statuses, the worst categories ranked, the opportunities), the sender (name, brand, site) and the
+  links (tracked landing, unsubscribe, attached images). Conditional blocks keep a sentence right
+  when a value is missing: `{{#rating}}…{{/rating}}` and `{{^rating}}…{{/rating}}`.
+- **Findings.** WHICH gap a lead is approached about is a rule (photos and reviews weigh double,
+  then hours, then description); HOW it is phrased belongs to the template, so `{{finding_1}}`
+  speaks in its own voice — or says nothing when the template has no words for it.
+- **Variants.** A step may carry several angles, drawn deterministically per lead (same lead ⇒
+  same angle) and never repeating one already sent in the sequence. Optionally, variants are
+  narrowed by the lead's score band, so a neglected profile and a strong one read differently.
+- **Compliance.** Public-information disclosure and a one-click unsubscribe ship with every send:
+  if a template carries no way out, the footer from Settings → Email is appended — and if that is
+  empty too, the bare link goes out on its own.
+- **One-off.** A lead can also be sent an email written for it alone, never saved to the library,
+  with the same variables, tracking and compliance.
 
 **Tracking & attribution.** Every individual send (initial, each follow-up, each retry) gets its
 own random `rid` (24 bytes → 32 URL-safe chars). Only its SHA-256 (`tracking_id_hash`, unique
@@ -146,11 +157,11 @@ duplicates counts. This measures **consented landing visits** — there is no op
 click without cookie consent is never counted. Sends that predate tracking stay visible as
 "untracked"; hashes are never invented retroactively.
 
-**Follow-ups.** `FOLLOWUP_AFTER_DAYS` (default 3) after a send, leads with 1–2 sends surface in
-the **Follow-up** tab; ✓ sends the next touch (always a personal note, always a variant not yet
-used — #2 in "it's me again" tone, #3 as a warm breakup), → stops the sequence, ✕ suppresses.
-Hard cap: 3 sends per lead. Subject bands on the dashboard style: rating < 4 → improvement tone,
-≥ 4 → retention tone. The lead page previews everything inside a Gmail-fidelity frame.
+**Follow-ups.** How many follow-ups a sequence has is a setting (1–5; a template gets one step
+each). After the configured delay, leads that have not used up their sequence surface in the
+**Follow-up** tab; ✓ sends the next touch (a variant not yet used, in the template that opened the
+sequence unless another is chosen for that step), → stops the sequence, ✕ suppresses. The lead page
+previews everything inside a Gmail-fidelity frame.
 
 ## Data model
 

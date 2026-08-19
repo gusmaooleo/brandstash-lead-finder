@@ -1,6 +1,6 @@
 /**
  * Gmail-fidelity email preview: reproduces the Gmail reading pane chrome —
- * subject + Inbox chip, avatar, sender line ("Brandstash <email>", "to me"),
+ * subject + Inbox chip, avatar, sender line ("<email>", "to me"),
  * time + action icons — with the rendered email in a sandboxed iframe below.
  * Deliberately ALWAYS light, exactly like Gmail, regardless of the app theme.
  */

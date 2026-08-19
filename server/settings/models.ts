@@ -29,32 +29,25 @@ const appSettingsSchema = new Schema(
       smtp_secure: { type: Boolean, default: false },
       smtp_user: { type: String, default: '' },
       smtp_pass_enc: { type: String, default: null },
+      /** Disclosure block appended when a template carries no unsubscribe link. */
+      footer_html: { type: String, default: '' },
       unsubscribe_base_url: { type: String, default: 'http://localhost:4000' },
     },
 
     /**
      * WHO is sending and WHAT they sell. Feeds the copy generator, the brand
-     * marks in the built-in report email and the tracked landing link, so the
-     * app is not wired to one company. Shipped with Brandstash's values.
+     * tokens a template may use and the tracked landing link. Empty on a fresh
+     * install: this is the operator's own identity, entered in Settings →
+     * Offer, and nothing in the code names a company.
      */
     offer: {
-      brand_name: { type: String, default: 'Brandstash' },
-      /** One paragraph the generator uses as "what we sell". */
-      what_we_sell: {
-        type: String,
-        default:
-          "Brandstash keeps a business's Google Business Profile alive automatically: fresh photos, correct hours, posts, review replies — the recurring work that decides who shows up first in local search. For agencies, the same thing at scale: every client's profile kept updated from one dashboard, so they can offer it without hiring for it.",
-      },
-      /** Base of every tracked landing link in an outreach email. */
-      site_url: { type: String, default: 'https://www.brandstash.ai' },
-      logo_url: {
-        type: String,
-        default: 'https://pub-62b9434b63214cb4b5b74cebb8d4c261.r2.dev/content/brandstash-icon-black.svg',
-      },
+      brand_name: { type: String, default: '' },
+      what_we_sell: { type: String, default: '' },
+      site_url: { type: String, default: '' },
+      logo_url: { type: String, default: '' },
       /**
-       * The built-in Google-profile analysis is always computed (it scores and
-       * ranks the leads). This decides whether generated copy may USE it —
-       * the findings, the score — as the hook, or must sell without it.
+       * The profile analysis is always computed (it scores and ranks the
+       * leads). This decides whether generated copy may USE it.
        */
       use_analysis_in_copy: { type: Boolean, default: true },
     },
@@ -73,6 +66,8 @@ const appSettingsSchema = new Schema(
       leads_per_hour: { type: Number, default: 10 },
       lead_retention_days: { type: Number, default: 45 },
       followup_after_days: { type: Number, default: 3 },
+      /** How many follow-ups a sequence may send after the initial email. */
+      followup_steps: { type: Number, default: 2, min: 1, max: 5 },
     },
 
     /** Read-only connection to the landing's consented visit events. */

@@ -86,7 +86,7 @@ describe('settings writes', () => {
         mode: 'resend',
         resendKey: 're_live_secret_value',
         smtpPass: 'app-password-1234',
-        from: { name: 'Leonardo', email: 'get@brandstash.ai', label: 'Leonardo <get@brandstash.ai>' },
+        from: { name: 'Leonardo', email: 'hello@acme.example', label: 'Leonardo <hello@acme.example>' },
       },
       ai: { anthropicKey: 'sk-ant-secret-key', model: 'claude-opus-5' },
       googlePlacesApiKey: 'AIzaPlacesKey',
@@ -105,22 +105,20 @@ describe('settings writes', () => {
     // …while still telling the UI what is configured, and what it looks like.
     expect(settingsView().ai.anthropic_key_masked).toMatch(/key$/)
     expect(settingsView().ai.model).toBe('claude-opus-5')
-    expect(settingsView().email.from_label).toBe('Leonardo <get@brandstash.ai>')
+    expect(settingsView().email.from_label).toBe('Leonardo <hello@acme.example>')
   })
 
-  it('ships the Brandstash offer as the default, so nothing changes for it', () => {
-    setSettingsForTests({})
-    const offer = settingsView().offer
-    expect(offer.brand_name).toBe('Brandstash')
-    expect(offer.site_url).toBe('https://www.brandstash.ai')
-    expect(offer.logo_url).toContain('brandstash-icon-black.svg')
-    expect(offer.what_we_sell).toContain('Google Business Profile')
-    // The analysis is on by default — it is what today's copy leans on.
-    expect(offer.use_analysis_in_copy).toBe(true)
+  it('ships NO offer: brand, pitch, site and logo belong to the operator', () => {
+    setSettingsForTests({ offer: { brandName: '', whatWeSell: '', siteUrl: '', logoUrl: '' } })
+    const view = settingsView()
+    expect(view.offer.brand_name).toBe('')
+    expect(view.offer.what_we_sell).toBe('')
+    expect(view.offer.site_url).toBe('')
+    expect(view.offer.logo_url).toBe('')
   })
 
   it('concatenates the sender identity the way both transports expect', () => {
-    expect(addressLabel('Leonardo', 'get@brandstash.ai')).toBe('Leonardo <get@brandstash.ai>')
-    expect(addressLabel('  "Brandstash"  ', ' GET@Brandstash.AI ')).toBe('Brandstash <get@brandstash.ai>')
+    expect(addressLabel('Leonardo', 'hello@acme.example')).toBe('Leonardo <hello@acme.example>')
+    expect(addressLabel('  "Acme"  ', ' HELLO@Acme.Example ')).toBe('Acme <hello@acme.example>')
   })
 })

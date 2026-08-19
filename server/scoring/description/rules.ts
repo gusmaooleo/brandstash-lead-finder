@@ -1,10 +1,10 @@
 /**
  * VERBATIM PORT of the five deterministic description criteria:
- *   brandstash-app/api/src/gbp/description-analysis/rules/length.rule.ts
- *   brandstash-app/api/src/gbp/description-analysis/rules/keywords.rule.ts
- *   brandstash-app/api/src/gbp/description-analysis/rules/density.rule.ts
- *   brandstash-app/api/src/gbp/description-analysis/rules/prohibited-content.rule.ts
- *   brandstash-app/api/src/gbp/description-analysis/rules/readability.rule.ts
+ *   the product’s rules engine
+ *   the product’s rules engine
+ *   the product’s rules engine
+ *   the product’s rules engine
+ *   the product’s rules engine
  * (classes flattened into one module; @Injectable dropped — behavior unchanged.)
  */
 
@@ -134,7 +134,7 @@ export class ReadabilityRule implements DescriptionRule {
   }
 }
 
-/** Run/evidence order mirrors the Brandstash module's RULE_CLASSES list. */
+/** Run/evidence order mirrors the module's RULE_CLASSES list. */
 export const DESCRIPTION_RULES: DescriptionRule[] = [
   new LengthRule(),
   new KeywordsRule(),

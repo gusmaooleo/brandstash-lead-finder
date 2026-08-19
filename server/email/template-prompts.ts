@@ -13,7 +13,7 @@
  * contract, and the unsubscribe link.
  */
 
-import { TEMPLATE_PLACEHOLDERS } from './template-render'
+import { TEMPLATE_PLACEHOLDERS, TEMPLATE_SECTIONS } from './template-render'
 
 export type PromptPreset = 'joe_girard_note' | 'joe_girard_report' | 'free'
 
@@ -38,6 +38,7 @@ export const PROMPT_PRESETS: Array<{ id: PromptPreset; label: string; descriptio
 ]
 
 const PLACEHOLDER_CONTRACT = TEMPLATE_PLACEHOLDERS.map((p) => `  ${p.token} — ${p.description}`).join('\n')
+const SECTION_CONTRACT = TEMPLATE_SECTIONS.map((s) => `  ${s.token} — ${s.description}`).join('\n')
 
 const HOUSE_RULES = `
 NON-NEGOTIABLE RULES
@@ -65,17 +66,36 @@ NON-NEGOTIABLE RULES
 PLACEHOLDERS (use them; anything you don't use is fine, but never invent new ones)
 ${PLACEHOLDER_CONTRACT}
 
+CONDITIONAL BLOCKS — a value may be missing, and the sentence must still read
+right. Wrap the part that depends on it:
+${SECTION_CONTRACT}
+Example: {{#rating}}your {{rating}}★ says a lot{{/rating}}{{^rating}}you are just getting started on Google{{/rating}}
+
 OUTPUT FORMAT — strict JSON, nothing else, no markdown fence:
 {
   "messages": [
-    { "followup": 0, "subject": "...", "html": "..." },
-    { "followup": 1, "subject": "...", "html": "..." },
-    { "followup": 2, "subject": "...", "html": "..." }
+    {
+      "followup": 0,
+      "variants": [
+        { "subject": "...", "preheader": "...", "html": "...", "band": null }
+      ]
+    }
   ]
 }
-followup 0 = the first email, 1 = a warm bump a few days later ("it's me
-again"), 2 = a friendly breakup ("last time, promise") that leaves something
-useful behind. All three must stand on their own if read in isolation.`
+
+- One entry per STEP of the sequence: followup 0 is the first email, then 1, 2…
+  Each step must stand on its own if read in isolation — a bump reads like a
+  person following up, the last one closes warmly and leaves something useful.
+- VARIANTS are different ANGLES on the same step, not rewordings: each opens on
+  a different reason to care. One is drawn per lead, and a follow-up never
+  reuses an angle already sent.
+- "band" is null unless you are told to write for the score bands, in which
+  case each step needs one "low" variant (a neglected profile — lead with what
+  is costing them) and one "high" (a strong profile — lead with what they have
+  already earned).
+- "preheader" is the one line shown next to the subject in the inbox: a
+  continuation of the subject, never a repeat of it. Keep it under 90
+  characters.`
 
 const GIRARD_VOICE = `
 VOICE — Joe Girard's playbook, applied to cold email
@@ -129,6 +149,12 @@ export type BuildPromptInput = {
   categories: string[]
   /** Asset URLs available as {{logo_url}} / {{asset_n}}. */
   assets: string[]
+  /** How many messages the sequence has: initial + the configured follow-ups. */
+  steps?: number
+  /** Different angles to write per step. Ignored when `bands` is on. */
+  variantsPerStep?: number
+  /** Write one variant per score band instead of free angles. */
+  bands?: boolean
 }
 
 export type SystemPromptOptions = {
@@ -154,6 +180,7 @@ ${HOUSE_RULES}`
 }
 
 export function buildUserPrompt(input: BuildPromptInput): string {
+  const steps = input.steps ?? 3
   const parts = [
     `LANGUAGE: ${input.language}`,
     `AUDIENCE: ${input.audience || 'small business owners'}`,
@@ -169,18 +196,24 @@ export function buildUserPrompt(input: BuildPromptInput): string {
     'BRIEF FROM THE SENDER:',
     input.brief.trim() || '(no extra brief — use your judgment for this audience)',
     '',
-    'Write the three messages now. Return only the JSON object.',
+    input.bands
+      ? 'WRITE FOR THE SCORE BANDS: every step needs a "low" variant and a "high" one.'
+      : `ANGLES PER STEP: ${input.variantsPerStep ?? 1}${(input.variantsPerStep ?? 1) > 1 ? ' — genuinely different reasons to care, not the same email reworded.' : ''}`,
+    '',
+    `Write ${steps} step${steps === 1 ? '' : 's'} now (followup 0 = initial${steps > 1 ? `, then 1..${steps - 1}` : ''}). Return only the JSON object.`,
   ]
   return parts.join('\n')
 }
 
-export type ParsedTemplateMessage = { followup: number; subject: string; html: string }
+export type ParsedVariant = { subject: string; html: string; preheader: string; band: 'low' | 'high' | null }
+export type ParsedTemplateMessage = { followup: number; variants: ParsedVariant[] }
 
 /**
  * Parses the model's answer defensively: a stray code fence or a sentence
- * before the JSON must not lose the work.
+ * before the JSON must not lose the work, and a model that forgets the
+ * variants array and returns a flat message is still understood.
  */
-export function parseGeneratedTemplate(raw: string): ParsedTemplateMessage[] {
+export function parseGeneratedTemplate(raw: string, maxFollowup = 5): ParsedTemplateMessage[] {
   const withoutFence = raw
     .replace(/^\s*```(?:json)?/i, '')
     .replace(/```\s*$/, '')
@@ -188,16 +221,26 @@ export function parseGeneratedTemplate(raw: string): ParsedTemplateMessage[] {
   const start = withoutFence.indexOf('{')
   const end = withoutFence.lastIndexOf('}')
   if (start < 0 || end <= start) throw new Error('The model did not return a JSON object')
+
+  type RawVariant = { subject?: string; html?: string; preheader?: string; band?: string | null }
   const parsed = JSON.parse(withoutFence.slice(start, end + 1)) as {
-    messages?: Array<{ followup?: number; subject?: string; html?: string }>
+    messages?: Array<RawVariant & { followup?: number; variants?: RawVariant[] }>
   }
+
+  const variant = (v: RawVariant): ParsedVariant => ({
+    subject: String(v.subject ?? '').trim(),
+    html: String(v.html ?? '').trim(),
+    preheader: String(v.preheader ?? '').trim(),
+    band: v.band === 'low' || v.band === 'high' ? v.band : null,
+  })
+
   const messages = (parsed.messages ?? [])
     .map((m, i) => ({
-      followup: Number.isFinite(m.followup) ? Math.min(2, Math.max(0, Number(m.followup))) : i,
-      subject: String(m.subject ?? '').trim(),
-      html: String(m.html ?? '').trim(),
+      followup: Number.isFinite(m.followup) ? Math.min(maxFollowup, Math.max(0, Number(m.followup))) : i,
+      // A model that skipped the variants array still wrote one angle.
+      variants: (Array.isArray(m.variants) && m.variants.length ? m.variants : [m]).map(variant).filter((v) => v.subject && v.html),
     }))
-    .filter((m) => m.subject && m.html)
+    .filter((m) => m.variants.length)
   if (!messages.length) throw new Error('The model returned no usable message')
   return messages
 }

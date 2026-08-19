@@ -1,29 +1,32 @@
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { setSettingsForTests } from '../settings/settings'
 import { generateRid } from './rid'
 import {
   campaignFor,
   createPreviewLandingUrl,
   createTrackedLandingUrl,
+  landingBaseUrl,
   landingPathForLanguage,
-  LANDING_BASE_URL,
   templateIdFor,
 } from './landing-url'
 
+const SITE = 'https://acme.example'
+
 describe('tracked landing URL', () => {
+  beforeAll(() => setSettingsForTests({ offer: { siteUrl: SITE } }))
   const rid = generateRid()
   const base = {
     rid,
     language: 'pt',
     campaign: 'leadfinder_portuguese',
-    emailType: 'note' as const,
     templateId: 'note',
     variantId: 'v2',
     attemptNumber: 1,
   }
 
   it('carries every parameter with the exact contract names', () => {
-    const url = new URL(createTrackedLandingUrl(base))
-    expect(url.origin).toBe(LANDING_BASE_URL)
+    const url = new URL(createTrackedLandingUrl(base)!)
+    expect(url.origin).toBe(SITE)
     expect(url.pathname).toBe('/pt')
     expect(url.searchParams.get('utm_source')).toBe('cold_email')
     expect(url.searchParams.get('utm_medium')).toBe('email')
@@ -41,7 +44,7 @@ describe('tracked landing URL', () => {
     for (const lang of ['en', 'es', 'fr', 'de', 'it', 'zh-TW', 'zh-HK', 'ja', 'ko']) {
       expect(landingPathForLanguage(lang)).toBe('/en')
     }
-    expect(new URL(createTrackedLandingUrl({ ...base, language: 'ja' })).pathname).toBe('/en')
+    expect(new URL(createTrackedLandingUrl({ ...base, language: 'ja' })!).pathname).toBe('/en')
   })
 
   it('encodes special characters in UTM values correctly', () => {
@@ -51,12 +54,21 @@ describe('tracked landing URL', () => {
       templateId: 'nota?especial=1',
       variantId: null,
     })
-    const parsed = new URL(url)
+    const parsed = new URL(url!)
     // Round-trips exactly through URLSearchParams — nothing double-encoded.
     expect(parsed.searchParams.get('utm_campaign')).toBe('salvador restaurants & cafés')
     expect(parsed.searchParams.get('utm_content')).toBe('nota?especial=1')
     expect(url).not.toContain('cafés&')
     expect(url).toContain('caf%C3%A9s')
+  })
+
+  it('links nowhere when no site is configured — never to somebody else’s', () => {
+    setSettingsForTests({ offer: { siteUrl: '' } })
+    expect(landingBaseUrl()).toBeNull()
+    expect(createTrackedLandingUrl(base)).toBeNull()
+    const { rid: _rid, ...preview } = base
+    expect(createPreviewLandingUrl(preview)).toBeNull()
+    setSettingsForTests({ offer: { siteUrl: SITE } })
   })
 
   it('refuses to build a URL for an invalid rid', () => {
@@ -66,7 +78,7 @@ describe('tracked landing URL', () => {
 
   it('builds a preview link that the landing can never book as cold email', () => {
     const { rid: _rid, ...previewInput } = base
-    const url = new URL(createPreviewLandingUrl(previewInput))
+    const url = new URL(createPreviewLandingUrl(previewInput)!)
     // Same shape — the preview must look like the real thing…
     expect(url.pathname).toBe('/pt')
     expect(url.searchParams.get('utm_medium')).toBe('email')
@@ -81,9 +93,9 @@ describe('tracked landing URL', () => {
   it('derives stable campaign slugs and template ids', () => {
     expect(campaignFor('portuguese')).toBe('leadfinder_portuguese')
     expect(campaignFor('Mandarin Taiwan!')).toBe('leadfinder_mandarin_taiwan_')
-    expect(templateIdFor('note', 0)).toBe('note')
-    expect(templateIdFor('note', 1)).toBe('note_followup_1')
-    expect(templateIdFor('note', 2)).toBe('note_followup_2')
-    expect(templateIdFor('dashboard', 0)).toBe('dashboard')
+    // The id is the template's own, so analytics names the copy that was sent.
+    expect(templateIdFor('64ab12', 0)).toBe('tpl_64ab12')
+    expect(templateIdFor('64ab12', 1)).toBe('tpl_64ab12_followup_1')
+    expect(templateIdFor('64ab12', 5)).toBe('tpl_64ab12_followup_5')
   })
 })

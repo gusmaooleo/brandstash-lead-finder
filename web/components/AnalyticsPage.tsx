@@ -129,7 +129,7 @@ function SendDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               <SectionLabel>Send</SectionLabel>
               <div className="mt-2 space-y-1.5 text-[12.5px] text-gray-1">
                 <div className="flex justify-between gap-3"><span className="text-gray-2">Recipient</span><span className="truncate font-mono text-[11.5px] text-ink">{s.recipient}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-gray-2">Type · template</span><span className="text-ink">{s.style ?? '—'} · {s.template_id ?? '—'}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-gray-2">Template</span><span className="text-ink">{s.template_id ?? '—'}</span></div>
                 <div className="flex justify-between gap-3"><span className="text-gray-2">Variant</span><span className="text-ink">{s.variant != null ? `v${s.variant + 1}` : '—'}</span></div>
                 <div className="flex justify-between gap-3"><span className="text-gray-2">Campaign</span><span className="truncate text-ink">{s.campaign ?? '—'}</span></div>
                 <div className="flex justify-between gap-3"><span className="text-gray-2">Attempt</span><span className="text-ink">{s.attempt}/3{s.followup > 0 ? ` (follow-up ${s.followup})` : ''}</span></div>
@@ -176,13 +176,13 @@ function SendDrawer({ id, onClose }: { id: string; onClose: () => void }) {
 
 /* ── page ─────────────────────────────────────────────────────────────── */
 
-type SendFilters = { q: string; landing: string; style: string; attempt: string; status: string }
-const EMPTY_SEND_FILTERS: SendFilters = { q: '', landing: '', style: '', attempt: '', status: '' }
+
+type SendFilters = { q: string; landing: string; attempt: string; status: string }
+const EMPTY_SEND_FILTERS: SendFilters = { q: '', landing: '', attempt: '', status: '' }
 
 const GROUPS: Array<{ key: keyof AnalyticsOverview['breakdowns']; label: string }> = [
   { key: 'template', label: 'Template' },
   { key: 'variant', label: 'Variant' },
-  { key: 'style', label: 'Email type' },
   { key: 'campaign', label: 'Campaign' },
   { key: 'attempt', label: 'Attempt' },
 ]
@@ -472,11 +472,6 @@ export function AnalyticsPage() {
                 <option value="no_visit">Sent, no visit</option>
                 <option value="untracked">Untracked</option>
               </Select>
-              <Select value={filters.style} onChange={(e) => setFilter('style', e.target.value)}>
-                <option value="">Type: all</option>
-                <option value="note">Personal note</option>
-                <option value="dashboard">Dashboard</option>
-              </Select>
               <Select value={filters.attempt} onChange={(e) => setFilter('attempt', e.target.value)}>
                 <option value="">Attempt: all</option>
                 <option value="1">1 · initial</option>
@@ -512,7 +507,6 @@ export function AnalyticsPage() {
                     <tr className="border-b border-line text-[11px] uppercase tracking-[0.06em] text-gray-2">
                       <th className="px-4 py-2.5 font-medium">Lead</th>
                       <th className="px-3 py-2.5 font-medium">Recipient</th>
-                      <th className="px-3 py-2.5 font-medium">Type</th>
                       <th className="px-3 py-2.5 font-medium">Template</th>
                       <th className="px-3 py-2.5 font-medium">Campaign</th>
                       <th className="px-3 py-2.5 text-center font-medium">Att.</th>
@@ -531,7 +525,6 @@ export function AnalyticsPage() {
                       >
                         <td className="max-w-[220px] truncate px-4 py-2.5 font-medium text-ink">{s.lead_name}</td>
                         <td className="max-w-[200px] truncate px-3 py-2.5 font-mono text-[11px] text-gray-2">{s.recipient}</td>
-                        <td className="px-3 py-2.5 text-gray-1">{s.style ?? '—'}</td>
                         <td className="px-3 py-2.5 font-mono text-[11px] text-gray-2">{s.template_id ?? '—'}</td>
                         <td className="max-w-[160px] truncate px-3 py-2.5 font-mono text-[11px] text-gray-2">{s.campaign ?? '—'}</td>
                         <td className="px-3 py-2.5 text-center font-mono tabular-nums text-gray-1">{s.attempt}/3</td>

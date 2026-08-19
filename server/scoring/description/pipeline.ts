@@ -1,6 +1,6 @@
 /**
  * VERBATIM PORT of:
- *   brandstash-app/api/src/gbp/description-analysis/description-analysis.pipeline.ts
+ *   the product’s rules engine
  * (the DI-injected rule list becomes the static DESCRIPTION_RULES array.)
  *
  * Runs the registered description rules over a single shared context and

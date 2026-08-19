@@ -43,7 +43,6 @@ const deliverySchema = new Schema(
     subject: { type: String, default: null },
     subject_variant: { type: Number, default: null },
     /** 'note' (personal note, default) | 'dashboard' — of the LAST send. */
-    style: { type: String, default: null },
     /** 0 = initial send, 1 = bump, 2 = breakup — of the last send. */
     followup: { type: Number, default: null },
     language: { type: String, default: null },
@@ -70,6 +69,14 @@ const outreachSchema = new Schema(
      * bump in another because the library changed in between.
      */
     template_id: { type: String, default: null },
+    /**
+     * Per-step choice made on the lead screen. A step with no entry falls back
+     * to `template_id`, and then to whatever the resolver suggests.
+     */
+    step_templates: {
+      type: [new Schema({ followup: { type: Number, required: true }, template_id: { type: String, required: true } }, { _id: false })],
+      default: [],
+    },
   },
   { _id: false },
 )
@@ -121,7 +128,6 @@ const leadFields = {
   location: { type: locationSchema, default: null },
   contact: { type: contactSchema, required: true, default: () => ({}) },
   /** Outreach format: 'note' (personal note — default) | 'dashboard'. */
-  email_style: { type: String, required: true, default: 'note' },
   status: { type: String, required: true, default: 'pending', index: true },
   delivery: { type: deliverySchema, required: true, default: () => ({}) },
   outreach: { type: outreachSchema, required: true, default: () => ({}) },

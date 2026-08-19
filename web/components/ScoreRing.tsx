@@ -1,4 +1,4 @@
-/** Score ring — same geometry as brandstash-app's ScoreRing (r=40, stroke 8). */
+/** Score ring — r=40, stroke 8. */
 
 import { scoreColor } from './ui'
 

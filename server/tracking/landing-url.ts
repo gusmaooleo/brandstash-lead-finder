@@ -1,9 +1,9 @@
 /**
  * Tracked landing URLs — every link in an outreach email that points at the
- * Brandstash landing goes through here, so the whole send carries ONE rid
+ * landing goes through here, so the whole send carries ONE rid
  * and the exact UTM contract the landing validates:
  *
- *   https://www.brandstash.ai/{pt|en}
+ *   https://your-site.example/{pt|en}
  *     ?utm_source=cold_email        (exact)
  *     &utm_medium=email             (exact)
  *     &utm_campaign=<stable slug>
@@ -14,17 +14,16 @@
  * Built exclusively with URL/URLSearchParams — never by string concatenation.
  */
 
-import type { EmailStyle } from '../../shared/types'
-import type { OutreachAudience } from '../email/audience'
 import { isValidRid } from './rid'
 import { settings } from '../settings/settings'
 
-/** Fallback only — the real base is the offer's site URL (Settings → Offer). */
-export const LANDING_BASE_URL = 'https://www.brandstash.ai'
-
-/** Where tracked links point: the sender's own site. */
-export function landingBaseUrl(): string {
-  return settings().offer.siteUrl || LANDING_BASE_URL
+/**
+ * Where tracked links point: the sender's own site (Settings → Offer). With
+ * no site configured there is nowhere to link, and the email ships without a
+ * landing link rather than pointing at somebody else's domain.
+ */
+export function landingBaseUrl(): string | null {
+  return settings().offer.siteUrl || null
 }
 
 /** The landing only exists in pt and en — every other market reads en. */
@@ -39,19 +38,12 @@ export function campaignFor(marketScope: string): string {
 }
 
 /**
- * Template identifier: note / note_followup_1 / note_followup_2 / dashboard,
- * prefixed with the audience when the copy isn't the business-owner one
- * (agency_note, agency_note_followup_1…) so analytics can compare the two
- * pitches instead of averaging them together.
+ * Analytics id of the copy that produced a send: the template's own id, with
+ * the step appended so the initial email and its follow-ups can be compared
+ * instead of averaged together.
  */
-export function templateIdFor(
-  style: EmailStyle,
-  followupNumber: number,
-  audience: OutreachAudience = 'business',
-): string {
-  const prefix = audience === 'agency' ? 'agency_' : ''
-  if (style === 'dashboard') return `${prefix}dashboard`
-  return followupNumber > 0 ? `${prefix}note_followup_${followupNumber}` : `${prefix}note`
+export function templateIdFor(templateId: string, followupNumber: number): string {
+  return followupNumber > 0 ? `tpl_${templateId}_followup_${followupNumber}` : `tpl_${templateId}`
 }
 
 export type TrackedLandingUrlInput = {
@@ -59,7 +51,6 @@ export type TrackedLandingUrlInput = {
   rid: string
   language: string
   campaign: string
-  emailType: EmailStyle
   templateId: string
   /** e.g. "v2" — appended to utm_content when present. */
   variantId?: string | null
@@ -79,8 +70,10 @@ export type PreviewLandingUrlInput = Omit<TrackedLandingUrlInput, 'rid'>
  * preview link therefore drops `rid` and declares `utm_source=preview`, so the
  * landing books it as an ordinary visit and the cold-email numbers stay honest.
  */
-export function createPreviewLandingUrl(input: PreviewLandingUrlInput): string {
-  const url = new URL(landingPathForLanguage(input.language), landingBaseUrl())
+export function createPreviewLandingUrl(input: PreviewLandingUrlInput): string | null {
+  const base = landingBaseUrl()
+  if (!base) return null
+  const url = new URL(landingPathForLanguage(input.language), base)
   url.search = new URLSearchParams({
     utm_source: 'preview',
     utm_medium: 'email',
@@ -91,11 +84,13 @@ export function createPreviewLandingUrl(input: PreviewLandingUrlInput): string {
   return url.toString()
 }
 
-export function createTrackedLandingUrl(input: TrackedLandingUrlInput): string {
+export function createTrackedLandingUrl(input: TrackedLandingUrlInput): string | null {
   if (!isValidRid(input.rid)) {
     throw new Error('refusing to build a landing URL without a valid tracking id')
   }
-  const url = new URL(landingPathForLanguage(input.language), landingBaseUrl())
+  const base = landingBaseUrl()
+  if (!base) return null
+  const url = new URL(landingPathForLanguage(input.language), base)
   url.search = new URLSearchParams({
     utm_source: 'cold_email',
     utm_medium: 'email',

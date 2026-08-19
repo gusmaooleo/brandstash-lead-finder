@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.32.1",
-  "description": "Local lead finder for Brandstash prospecting — Places API discovery, Brandstash-parity scoring, human-approved outreach.",
+  "description": "Local lead finder — Places API discovery, Google-profile scoring, human-approved outreach.",
   "scripts": {
     "dev": "concurrently -n api,web -c blue,green \"tsx watch server/index.ts\" \"vite\"",
     "dev:api": "tsx watch server/index.ts",

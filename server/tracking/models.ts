@@ -41,7 +41,6 @@ const emailSendSchema = new Schema(
     campaign: { type: String, required: true, index: true },
 
     /** Email type: 'note' | 'dashboard'. */
-    style: { type: String, required: true, index: true },
     /** note / note_followup_1 / note_followup_2 / dashboard (± _vN suffix set on completion). */
     template_id: { type: String, required: true, index: true },
     /** Note variant or dashboard subject variant (0-based); null until rendered. */

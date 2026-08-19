@@ -33,10 +33,7 @@ export type LeadStatus = 'pending' | 'approved' | 'skipped' | 'do_not_contact' |
 /** Outbound delivery state (lives on approved leads). */
 export type DeliveryState = 'not_sent' | 'sent' | 'sent_dry_run' | 'failed'
 
-/** Outreach email format: personal note (default) or the visual dashboard. */
-export type EmailStyle = 'note' | 'dashboard'
-
-/** Follow-up sequence state (initial + up to 2 follow-ups). */
+/** Follow-up sequence state (initial send plus the configured follow-ups). */
 export type LeadOutreach = {
   count: number
   last_sent_at: string | null
@@ -109,7 +106,6 @@ export type LeadDto = {
   score: number
   location: { lat: number; lng: number } | null
   contact: LeadContact
-  email_style: EmailStyle
   status: LeadStatus
   delivery: LeadDelivery
   outreach: LeadOutreach
@@ -163,7 +159,7 @@ export type DiscoveryStatusDto = {
   email_mode: 'dry_run' | 'smtp' | 'resend'
 }
 
-/** Score visual bands — mirrors brandstash-app src/features/gbp/constants.tsx getScoreColor. */
+/** Score visual bands — the same thresholds the scoring engine uses. */
 export function scoreBand(score: number): 'good' | 'mid' | 'low' {
   if (score >= 7) return 'good'
   if (score >= 4) return 'mid'
@@ -171,7 +167,7 @@ export function scoreBand(score: number): 'good' | 'mid' | 'low' {
 }
 
 export const SCORE_BAND_COLORS: Record<'good' | 'mid' | 'low', string> = {
-  // Brandstash light-theme chart tokens (src/index.css .light --chart-1/2/3).
+  // light-theme chart tokens (src/index.css .light --chart-1/2/3).
   good: '#059669',
   mid: '#d97706',
   low: '#dc2626',

@@ -22,7 +22,6 @@ export type SendRow = {
   status: string
   sent_at: Date | string | null
   created_at?: Date | string
-  style?: string
   template_id?: string
   variant?: number | null
   followup?: number

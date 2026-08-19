@@ -78,7 +78,6 @@ function buildSendsQuery(q: Record<string, unknown>): Record<string, unknown> {
     const rx = { $regex: escapeRegex(String(q.q).slice(0, 80)), $options: 'i' }
     filters.push({ $or: [{ lead_name: rx }, { recipient: rx }] })
   }
-  if (q.style === 'note' || q.style === 'dashboard') query.style = q.style
   if (q.template) query.template_id = { $regex: `^${escapeRegex(String(q.template).slice(0, 60))}` }
   if (q.campaign) query.campaign = String(q.campaign).slice(0, 80)
   if (q.variant !== undefined && q.variant !== '' && Number.isInteger(Number(q.variant))) {
@@ -138,7 +137,6 @@ function serializeSend(row: LeanSend): Record<string, unknown> {
     recipient: row.recipient,
     language: row.language ?? null,
     campaign: row.campaign ?? null,
-    style: row.style ?? null,
     template_id: row.template_id ?? null,
     variant: row.variant ?? null,
     followup: row.followup ?? 0,
@@ -168,7 +166,7 @@ function serializeSend(row: LeanSend): Record<string, unknown> {
 analytics.get('/overview', async (req, res) => {
   const { from, to } = parseRange(req.query as Record<string, unknown>)
   const rows = (await EmailSend.find(rangeQuery(from, to), {
-    place_id: 1, status: 1, sent_at: 1, created_at: 1, style: 1, template_id: 1,
+    place_id: 1, status: 1, sent_at: 1, created_at: 1, template_id: 1,
     variant: 1, followup: 1, attempt: 1, campaign: 1, tracking_id_hash: 1, landing_visit: 1,
   })
     .sort({ created_at: -1 })
@@ -189,9 +187,8 @@ analytics.get('/overview', async (req, res) => {
     totals: overviewMetrics(rows),
     timeseries: timeseries(rows, from, to),
     breakdowns: {
-      style: breakdown(rows, (r) => r.style),
-      template: relabelTemplateKeys(templateRows, names),
-      variant: breakdown(rows, (r) => (r.variant == null ? null : `${r.style ?? '?'} v${r.variant + 1}`)),
+        template: relabelTemplateKeys(templateRows, names),
+      variant: breakdown(rows, (r) => (r.variant == null ? null : `v${r.variant + 1}`)),
       campaign: breakdown(rows, (r) => r.campaign),
       attempt: breakdown(rows, (r) => `attempt_${r.attempt ?? 1}`),
     },
@@ -253,7 +250,7 @@ analytics.get('/sends.csv', async (req, res) => {
     .lean()) as unknown as LeanSend[]
 
   const header = [
-    'lead', 'recipient', 'language', 'campaign', 'style', 'template', 'variant',
+    'lead', 'recipient', 'language', 'campaign', 'template', 'variant',
     'attempt', 'status', 'sent_at', 'landing_status', 'first_visit', 'last_visit', 'sessions',
   ]
   const lines = rows.map((r) => {
