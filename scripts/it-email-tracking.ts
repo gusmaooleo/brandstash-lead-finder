@@ -55,18 +55,21 @@ async function main() {
     name: 'IT generic',
     audience: 'business',
     categories: [],
-    language: 'pt',
-    findings: { no_hours: 'não tem horário cadastrado', few_photos: 'só {{count}} fotos' },
-    messages: [0, 1, 2].map((followup) => ({
-      followup,
-      variants: [
-        {
-          subject: `passo ${followup} — {{business_name}}`,
-          html: `<p>{{finding_1}} <a href="{{landing_url}}">{{brand_name}}</a></p>`,
-          text: `{{finding_1}}\n{{landing_url}}`,
-        },
-      ],
-    })),
+    languages: {
+      pt: {
+        findings: { no_hours: 'não tem horário cadastrado', few_photos: 'só {{count}} fotos' },
+        messages: [0, 1, 2].map((followup) => ({
+          followup,
+          variants: [
+            {
+              subject: `passo ${followup} — {{business_name}}`,
+              html: `<p>{{finding_1}} <a href="{{landing_url}}">{{brand_name}}</a></p>`,
+              text: `{{finding_1}}\n{{landing_url}}`,
+            },
+          ],
+        })),
+      },
+    },
   })
   invalidateTemplates()
   console.log('[it] connected to isolated db')
@@ -210,8 +213,7 @@ async function main() {
     name: 'IT agencies',
     audience: 'agency',
     categories: ['Video production service'],
-    language: 'pt',
-    messages: [{ followup: 0, variants: [{ subject: 'agências', html: '<p>oi</p>' }] }],
+    languages: { pt: { messages: [{ followup: 0, variants: [{ subject: 'agências', html: '<p>oi</p>' }] }] } },
   })
   invalidateTemplates()
   assert.equal((await resolveTemplate(agencyLead, { language: 'pt' }))?.name, 'IT agencies', 'the bound one wins')

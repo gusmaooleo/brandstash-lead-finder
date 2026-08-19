@@ -52,7 +52,7 @@ const appSettingsSchema = new Schema(
       use_analysis_in_copy: { type: Boolean, default: true },
     },
 
-    /** The model that writes email templates in Settings → Generate. */
+    /** The model that drafts email templates in Settings → Create. */
     ai: {
       anthropic_key_enc: { type: String, default: null },
       model: { type: String, default: '' },

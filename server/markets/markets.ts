@@ -71,7 +71,6 @@ export const PLACES_LANGUAGE: Record<EmailLanguage, string> = {
   es: 'es',
   fr: 'fr',
   de: 'de',
-  it: 'it',
   'zh-TW': 'zh-TW',
   'zh-HK': 'zh-HK',
   ja: 'ja',

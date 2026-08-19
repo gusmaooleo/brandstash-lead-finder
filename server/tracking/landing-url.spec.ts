@@ -9,6 +9,7 @@ import {
   landingPathForLanguage,
   templateIdFor,
 } from './landing-url'
+import { EMAIL_LANGUAGES } from '../../shared/types'
 
 const SITE = 'https://acme.example'
 
@@ -41,7 +42,7 @@ describe('tracked landing URL', () => {
 
   it('routes pt to /pt and every other language to /en', () => {
     expect(landingPathForLanguage('pt')).toBe('/pt')
-    for (const lang of ['en', 'es', 'fr', 'de', 'it', 'zh-TW', 'zh-HK', 'ja', 'ko']) {
+    for (const lang of EMAIL_LANGUAGES.filter((l) => l !== 'pt')) {
       expect(landingPathForLanguage(lang)).toBe('/en')
     }
     expect(new URL(createTrackedLandingUrl({ ...base, language: 'ja' })!).pathname).toBe('/en')

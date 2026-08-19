@@ -52,13 +52,13 @@ browser only ever receives masks:
 | Settings | What it holds |
 |---|---|
 | **Offer** | Brand name, site URL, logo and the "what you sell" paragraph — the app is not wired to one company. Also decides whether generated copy may lean on the Google-profile analysis |
-| **Claude** | Anthropic key + model (the dropdown lists what that key can actually use). Writes email templates in Settings → Generate |
+| **Claude** | Anthropic key + model (the dropdown lists what that key can actually use). Drafts email templates in Settings → Create |
 | **Google Places** | Places API (New) key, used server-side only |
 | **Landing database** | Read-only connection to the store where the landing writes `landing_visit_events` (Atlas in production). Empty = local-dev fallback to the lead finder's own Mongo |
 | **Discovery** | Leads per hour (discovery pauses when the window fills), follow-up delay, and how long a pending lead waits before being soft-archived (hidden, reopenable, never deleted) |
 | **Sender identity** | Name + address, concatenated into the `Name <email@domain>` both transports send. Reply-To optional |
 | **Delivery** | `dry_run` (renders/records, sends nothing), `resend` or `smtp` — one contract, two implementations (`server/email/provider.ts`). Resend retries carry an idempotency key, so a network hiccup can never double-send |
-| **Email templates** | Every email the app can send: written by hand or with Claude, in plain text or HTML, generic or bound to Google Business categories (most specific is suggested first) |
+| **Email templates** | Every email the app can send: one document per pitch, with one entry per language it is written in — written by hand or with Claude, in plain text or HTML, generic or bound to Google Business categories (most specific is suggested first) |
 
 ## How it works
 
@@ -120,10 +120,18 @@ unsubscribe. Dead addresses are never offered again and every send is blocked ag
 registry right before delivery.
 
 **Email.** Every email comes from a template in the database — the app ships with none, and says
-so instead of offering a send that cannot work. A template is written by hand or drafted by
-Claude from a brief, in plain text or HTML, for one language, and may be bound to Google Business
+so instead of offering a send that cannot work. A template is a pitch: it is written by hand or
+drafted by Claude from a brief, in plain text or HTML, and may be bound to Google Business
 categories (the most specific match is suggested first; any template can still be picked by hand
 on the lead screen).
+
+- **One template, many languages.** A pitch is one document; each language it is written in is one
+  entry of it, carrying only what differs — subject, body, findings, its own words. Targeting,
+  angles and images are decided once, at the top, so a translation can never drift into a second
+  template with its own rules. A lead's language comes from the country it was found in, and the
+  library either answers it or the screen says it cannot — never a send in a language the
+  recipient does not read. The languages offered are exactly the ones a market can reach
+  (`shared/types.ts`, held in step with `coverage.ts` by the test suite).
 
 - **Variables.** The copy interpolates `{{tokens}}` — the lead (name, city, rating, reviews,
   category, address, phone, website), the profile analysis (overall score, per-category scores and

@@ -18,7 +18,7 @@ import { CountryPicker, flagOf } from './components/CountryPicker'
 import { LeadGlobe } from './components/Globe'
 import { RowActions } from './components/RowActions'
 import { ThemeToggle, useTheme } from './components/ThemeToggle'
-import type { MarketScope } from '../shared/types'
+import { EMAIL_LANGUAGES, type MarketScope } from '../shared/types'
 
 const LOGO_URL = 'https://pub-62b9434b63214cb4b5b74cebb8d4c261.r2.dev/content/brandstash-icon-black.svg'
 
@@ -567,7 +567,7 @@ export default function App() {
                   </Select>
                   <Select value={filters.language} onChange={(e) => setFilter('language', e.target.value)}>
                     <option value="">Language: all</option>
-                    {['en', 'pt', 'es', 'fr', 'de', 'it', 'zh-TW', 'zh-HK', 'ja', 'ko'].map((l) => (
+                    {EMAIL_LANGUAGES.map((l) => (
                       <option key={l} value={l}>
                         {langLabel(l)}
                       </option>

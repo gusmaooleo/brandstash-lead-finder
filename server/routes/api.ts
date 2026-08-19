@@ -15,7 +15,7 @@ import { ALL_CATEGORIES } from '../discovery/categories'
 import { MARKETS, scopedMarket } from '../markets/markets'
 import { followupDueQuery, maxSends } from '../leads/followup'
 import { renderForLead, sendLeadEmail, isSuppressed, SuppressedRecipientError, NoTemplateError } from '../email/sender'
-import { resolveTemplate, templateById, templateOptionsFor } from '../email/template-store'
+import { languagesOf, resolveTemplate, stepsOf, templateById, templateOptionsFor } from '../email/template-store'
 import { DeadRecipientError } from '../email/dead-addresses'
 import { beginTrackedSend, completeTrackedSend, failTrackedSend } from '../tracking/send-log'
 import { campaignFor } from '../tracking/landing-url'
@@ -370,7 +370,7 @@ api.get('/leads/:id/email-preview', async (req, res) => {
   const token = found.doc.delivery?.unsubscribe_token ?? 'preview'
   const requested = String(req.query.template ?? '').trim()
   const template = requested
-    ? await templateById(requested)
+    ? await templateById(requested, language)
     : await resolveTemplate(found.doc, {
         language,
         followupNumber: followup,
@@ -452,13 +452,21 @@ api.post('/leads/:id/email-preview', async (req, res) => {
   })
 })
 
-/** Every template this lead may be sent with, the resolved one flagged. */
+/**
+ * Every template this lead may be sent with, the resolved one flagged.
+ *
+ * The lead's language is decided by the country it was found in and is NOT a
+ * choice here — it is reported so the screen can name it, and each template
+ * declares which of its languages carry which steps, so one that cannot answer
+ * this lead shows as unavailable instead of quietly disappearing.
+ */
 api.get('/leads/:id/templates', async (req, res) => {
   const found = await findLeadAnywhere(req.params.id)
   if (!found) return res.status(404).json({ error: 'lead not found' })
   const followup = Math.min(maxSends() - 1, Math.max(0, Number(req.query.followup ?? 0) || 0))
+  const language = String(found.doc.language ?? 'en')
   const { suggestedId, templates } = await templateOptionsFor(found.doc, {
-    language: String(found.doc.language ?? 'en'),
+    language,
     followupNumber: followup,
     preferTemplateId: found.doc.outreach?.template_id ?? null,
   })
@@ -466,13 +474,14 @@ api.get('/leads/:id/templates', async (req, res) => {
     suggested_id: suggestedId,
     chosen_id: chosenTemplateId(found.doc, followup),
     max_followups: maxSends() - 1,
+    lead_language: language,
     templates: templates.map((t) => ({
       id: String(t._id),
       name: t.name,
-      language: t.language ?? null,
       audience: t.audience ?? 'custom',
       categories: t.categories ?? [],
-      steps: (t.messages ?? []).map((m) => m.followup),
+      /** Which steps each language of this template can send. */
+      steps_by_language: Object.fromEntries(languagesOf(t).map((l) => [l, stepsOf(t, l)])),
     })),
   })
 })
@@ -487,10 +496,15 @@ api.put('/leads/:id/template', async (req, res) => {
   const templateId = String(body.template_id ?? '').trim()
   const followup = Math.min(maxSends() - 1, Math.max(0, Number(body.followup ?? 0) || 0))
   if (!templateId) return res.status(400).json({ error: 'template_id is required' })
-  if (!(await templateById(templateId))) return res.status(404).json({ error: 'template not found' })
 
   const found = await findLeadAnywhere(req.params.id)
   if (!found) return res.status(404).json({ error: 'lead not found' })
+  // Pinning a template that has nothing in this lead's language would arm a
+  // send that can only fail at render time — refuse it here, where it shows.
+  const language = String(found.doc.language ?? 'en')
+  if (!(await templateById(templateId, language))) {
+    return res.status(404).json({ error: `no template with that id is written in ${language}` })
+  }
   const steps = found.doc.outreach.step_templates ?? []
   const existing = steps.find((s) => s.followup === followup)
   if (existing) existing.template_id = templateId
@@ -555,14 +569,12 @@ api.post('/leads/:id/approve', async (req, res) => {
   // gone when this handler returns.
   const oneOff = oneOffDraft((req.body ?? {}) as { subject?: string; html?: string; text?: string | null })
   const chosen = chosenTemplateId(approvedDoc, 0)
+  const approvedLanguage = String(approvedDoc.language ?? 'en')
   // With a one-off, the template is consulted only for its finding phrases.
   const template = oneOff
-    ? await resolveTemplate(approvedDoc, {
-        language: String(approvedDoc.language ?? 'en'),
-        preferTemplateId: chosen,
-      })
+    ? await resolveTemplate(approvedDoc, { language: approvedLanguage, preferTemplateId: chosen })
     : chosen
-      ? await templateById(chosen)
+      ? await templateById(chosen, approvedLanguage)
       : null
   let tracked
   try {

@@ -16,7 +16,6 @@ const COPY: Record<EmailLanguage, { title: string; body: string }> = {
   es: { title: 'Suscripción cancelada', body: 'No recibirás más mensajes nuestros.' },
   fr: { title: 'Désinscription confirmée', body: 'Vous ne recevrez plus aucun message de notre part.' },
   de: { title: 'Abmeldung bestätigt', body: 'Sie erhalten keine weiteren Nachrichten von uns.' },
-  it: { title: 'Iscrizione annullata', body: 'Non riceverai più alcun messaggio da parte nostra.' },
   'zh-TW': { title: '已取消訂閱', body: '您將不會再收到我們的任何郵件。' },
   'zh-HK': { title: '已取消訂閱', body: '您唔會再收到我哋嘅任何電郵。' },
   ja: { title: '配信を停止しました', body: '今後、当方からのメールが届くことはありません。' },

@@ -27,14 +27,14 @@ import { Button, Chip, Input, Select } from './ui'
 import { ClaudeIcon, GoogleIcon, MongoIcon } from './BrandIcons'
 import { ThemeToggle, useTheme } from './ThemeToggle'
 import { TemplatesTab } from './SettingsTemplates'
-import { GenerateTab } from './SettingsGenerate'
+import { CreateTab } from './SettingsCreate'
 
-type Tab = 'credentials' | 'templates' | 'generate'
+type Tab = 'credentials' | 'templates' | 'create'
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'credentials', label: 'Credentials' },
   { key: 'templates', label: 'Email templates' },
-  { key: 'generate', label: 'Generate' },
+  { key: 'create', label: 'Create' },
 ]
 
 /** A secret input: starts masked, becomes editable once the owner touches it. */
@@ -292,7 +292,7 @@ export function SettingsPage() {
       </header>
 
       <nav className="border-b border-line bg-paper">
-        <div className="mx-auto flex w-full max-w-[1240px] gap-1 px-5">
+        <div className="mx-auto flex w-full max-w-[1560px] gap-1 px-5">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -308,7 +308,7 @@ export function SettingsPage() {
       </nav>
 
       {tab !== 'credentials' && (
-        <main className="mx-auto grid w-full max-w-[1240px] gap-4 px-5 py-5">
+        <main className="mx-auto grid w-full max-w-[1560px] gap-4 px-5 py-5">
           {!library ? (
             <div className="px-1 py-8 text-center text-[12.5px] text-gray-3">Loading templates…</div>
           ) : tab === 'templates' ? (
@@ -320,7 +320,7 @@ export function SettingsPage() {
               onChanged={loadLibrary}
             />
           ) : (
-            <GenerateTab
+            <CreateTab
               library={library}
               catalog={catalog}
               senderName={stored.email.from_name || ''}
@@ -371,7 +371,7 @@ export function SettingsPage() {
           </Field>
           <Field
             label="What you sell"
-            hint="One paragraph. This is the context Claude writes from in the Generate tab."
+            hint="One paragraph. This is the context Claude writes from in the Create tab."
           >
             <textarea
               className="h-28 w-full rounded-lg border border-line bg-paper-2 px-2.5 py-2 text-[12.5px] leading-relaxed text-ink outline-none focus:border-line-2"

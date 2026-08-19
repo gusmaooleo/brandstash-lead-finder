@@ -27,7 +27,6 @@ import { GmailFrame } from './GmailFrame'
 import { Button, Chip, Input, SectionLabel, Select, STATUS_STYLE, flagEmoji, langLabel } from './ui'
 import { ThemeToggle, useTheme } from './ThemeToggle'
 
-const LANGS = ['en', 'pt', 'es', 'fr', 'de', 'it', 'zh-TW', 'zh-HK', 'ja', 'ko'] as const
 
 /** Full-screen lead review — route: /leads/:id */
 export function LeadPage() {
@@ -91,9 +90,28 @@ export function LeadPage() {
 
   const chosenTemplate = templateOptions?.chosen_id ?? templateOptions?.suggested_id ?? null
 
+  /**
+   * The lead's language is decided by the country it was found in; the copy
+   * that answers it must exist. Everything below is derived from that pair —
+   * which templates can serve this lead, and which languages each carries.
+   */
+  const leadLanguage = templateOptions?.lead_language ?? lead?.language ?? 'en'
+  const serves = useCallback(
+    (t: LeadTemplateOptions['templates'][number]) => (t.steps_by_language[leadLanguage] ?? []).includes(previewFollowup),
+    [leadLanguage, previewFollowup],
+  )
+  const templateLanguages = useMemo(() => {
+    const chosen = templateOptions?.templates.find((t) => t.id === chosenTemplate)
+    return Object.keys(chosen?.steps_by_language ?? {}).filter((l) =>
+      (chosen?.steps_by_language[l] ?? []).includes(previewFollowup),
+    )
+  }, [templateOptions, chosenTemplate, previewFollowup])
+
   useEffect(() => {
     if (!lead) return
-    const lang = previewLang ?? lead.language
+    // A language the chosen template does not carry is not a preview, it is a
+    // 404: fall back to the one this lead would actually be written in.
+    const lang = previewLang && templateLanguages.includes(previewLang) ? previewLang : leadLanguage
     if (oneOff) {
       const draft = oneOff.html ? { html: oneOff.body } : { text: oneOff.body }
       void previewOneOff(id, { subject: oneOff.subject, ...draft })
@@ -104,7 +122,7 @@ export function LeadPage() {
     void getEmailPreview(id, { lang, template: chosenTemplate ?? undefined, followup: previewFollowup })
       .then(setPreview)
       .catch(() => setPreview(null))
-  }, [id, lead, previewLang, previewFollowup, chosenTemplate, oneOff])
+  }, [id, lead, previewLang, leadLanguage, templateLanguages, previewFollowup, chosenTemplate, oneOff])
 
   const onPickTemplate = (templateId: string) => {
     setOneOff(null)
@@ -114,8 +132,15 @@ export function LeadPage() {
     })
   }
 
-  /** No template in the library: nothing can be sent, and the UI must say so. */
+  /**
+   * Nothing can be sent, and the UI must say so rather than offer a button
+   * that fails at render time. Two different gaps, two different sentences:
+   * an empty library, or a library with nothing in this lead's language.
+   */
   const noTemplates = templateOptions !== null && templateOptions.templates.length === 0
+  const noneInLanguage =
+    templateOptions !== null && templateOptions.templates.length > 0 && !templateOptions.templates.some(serves)
+  const cannotSend = noTemplates || noneInLanguage
 
   /** Next follow-up is due (approved, 1–2 sends, waited long enough, not stopped). */
   const followupDue = Boolean(
@@ -145,7 +170,7 @@ export function LeadPage() {
     lead?.status === 'pending' &&
     Boolean(recipient) &&
     emails.length > 0 &&
-    (!noTemplates || Boolean(oneOff?.subject.trim() && oneOff?.body.trim()))
+    (!cannotSend || Boolean(oneOff?.subject.trim() && oneOff?.body.trim()))
 
   const prospectReasons = useMemo(() => {
     if (!lead || !analysis) return []
@@ -518,13 +543,9 @@ export function LeadPage() {
         <div className="mt-4 rounded-2xl border border-line bg-card px-6 py-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <SectionLabel>Outreach email</SectionLabel>
-            <Select value={previewLang ?? lead.language} onChange={(e) => setPreviewLang(e.target.value)}>
-              {LANGS.map((l) => (
-                <option key={l} value={l}>
-                  {langLabel(l)}
-                </option>
-              ))}
-            </Select>
+            <Chip title="Decided by the country this lead was found in">
+              {flagEmoji(lead.country)} {langLabel(lead.language)}
+            </Chip>
           </div>
 
           <div className="mx-auto mt-3 w-full max-w-[920px]">
@@ -541,14 +562,31 @@ export function LeadPage() {
                 }}
               >
                 {templateOptions?.templates.map((t) => (
-                  <option key={t.id} value={t.id}>
+                  <option key={t.id} value={t.id} disabled={!serves(t)}>
                     {t.name}
                     {t.id === templateOptions.suggested_id ? ' · suggested for this category' : ''}
-                    {t.steps.includes(previewFollowup) ? '' : ' · no copy for this step'}
+                    {serves(t) ? '' : ` · nothing written in ${langLabel(leadLanguage)} for this step`}
                   </option>
                 ))}
                 <option value="one_off">Write a one-off email…</option>
               </Select>
+
+              {/* Which language of that template to look at. The send always
+                  uses the lead's own — this only changes what is on screen. */}
+              {!oneOff && templateLanguages.length > 1 && (
+                <Select
+                  className="w-[210px]"
+                  value={previewLang && templateLanguages.includes(previewLang) ? previewLang : leadLanguage}
+                  onChange={(e) => setPreviewLang(e.target.value)}
+                >
+                  {templateLanguages.map((l) => (
+                    <option key={l} value={l}>
+                      {langLabel(l)}
+                      {l === leadLanguage ? ' · this lead' : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
 
               {source === 'approved' &&
                 lead.outreach &&
@@ -568,8 +606,16 @@ export function LeadPage() {
 
             {noTemplates && (
               <div className="mt-2 rounded-xl border px-3.5 py-2.5 text-[12.5px] tint-warn">
-                You have no saved email template yet. Create one in Settings → Templates, or write a one-off
+                You have no saved email template yet. Create one in Settings → Create, or write a one-off
                 email below — until then there is nothing to send.
+              </div>
+            )}
+
+            {noneInLanguage && (
+              <div className="mt-2 rounded-xl border px-3.5 py-2.5 text-[12.5px] tint-warn">
+                This lead reads {langLabel(leadLanguage)}, and no template is written in it
+                {previewFollowup ? ` for follow-up ${previewFollowup}` : ''}. Add that language to one of your
+                templates in Settings → Templates, or write a one-off email below.
               </div>
             )}
 
@@ -609,9 +655,9 @@ export function LeadPage() {
               </div>
             )}
 
-            {(previewLang ?? lead.language) !== lead.language && (
+            {previewLang && templateLanguages.includes(previewLang) && previewLang !== leadLanguage && (
               <div className="mt-1.5 text-[11px] tint-warn-text">
-                Preview only — the sent email uses the lead’s market language: {langLabel(lead.language)}.
+                Preview only — the sent email uses the lead’s market language: {langLabel(leadLanguage)}.
               </div>
             )}
             {preview && (

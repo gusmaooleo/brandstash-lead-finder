@@ -208,21 +208,31 @@ export type TemplateVariant = {
 
 export type TemplateMessage = { followup: number; variants: TemplateVariant[] }
 
+/** One language of a template — everything about it that is words. */
+export type TemplateLanguage = {
+  messages: TemplateMessage[]
+  findings: Record<string, string>
+  strings: Record<string, string>
+  generation: { model: string | null; preset: string | null; brief: string | null; at: string | null } | null
+}
+
+/**
+ * A template is a pitch, and the same pitch in every language it was written
+ * in: targeting at the top level, words under `languages`.
+ */
 export type EmailTemplate = {
   _id: string
   name: string
   audience: string
   categories: string[]
-  language: string | null
   active: boolean
   priority: number
   low_score_variants: boolean
   assets: string[]
-  findings: Record<string, string>
-  strings: Record<string, string>
-  messages: TemplateMessage[]
-  generation: { model: string | null; preset: string | null; brief: string | null; at: string | null } | null
   notes: string
+  /** The languages it carries, in the UI's fixed order. */
+  language_codes: string[]
+  languages: Record<string, TemplateLanguage>
   updated_at: string
 }
 
@@ -237,40 +247,46 @@ export type TemplateLibrary = {
 }
 
 export const getTemplates = () => request<TemplateLibrary>('/api/templates')
-export const createTemplate = (body: {
-  name: string
-  audience?: string
-  categories?: string[]
-  language?: string
+
+/** The words of one language, as the editor sends them. */
+export type TemplateLanguageInput = {
   messages: TemplateMessage[]
   findings?: Record<string, string>
   strings?: Record<string, string>
-  assets?: string[]
-  low_score_variants?: boolean
   generation?: { model?: string; preset?: string; brief?: string } | null
-  notes?: string
-}) => request<{ template: EmailTemplate }>('/api/templates', { method: 'POST', body: JSON.stringify(body) })
-export const updateTemplate = (id: string, body: Partial<Omit<EmailTemplate, '_id' | 'updated_at'>>) =>
-  request<{ template: EmailTemplate }>(`/api/templates/${id}`, { method: 'PUT', body: JSON.stringify(body) })
-export const deleteTemplate = (id: string) =>
-  request<{ ok: true }>(`/api/templates/${id}`, { method: 'DELETE' })
-/** Renders a STORED template (built-in included) through the real send path. */
-export const previewStoredTemplate = (id: string, opts: { lang?: string; followup?: number } = {}) => {
-  const params = new URLSearchParams()
-  if (opts.lang) params.set('lang', opts.lang)
-  if (opts.followup) params.set('followup', String(opts.followup))
-  const qs = params.toString()
-  return request<{
-    subject: string
-    html: string
-    text: string | null
-    template_name: string
-    variant: number
-    followup: number
-    language: string
-  }>(`/api/templates/${id}/preview${qs ? `?${qs}` : ''}`)
 }
 
+/** A new template starts with the one language it was written in. */
+export const createTemplate = (
+  body: {
+    name: string
+    audience?: string
+    categories?: string[]
+    language: string
+    assets?: string[]
+    low_score_variants?: boolean
+    notes?: string
+  } & TemplateLanguageInput,
+) => request<{ template: EmailTemplate }>('/api/templates', { method: 'POST', body: JSON.stringify(body) })
+
+/** The pitch: who it targets and how it behaves — never its words. */
+export type TemplateSettingsPatch = Partial<
+  Pick<EmailTemplate, 'name' | 'audience' | 'categories' | 'active' | 'priority' | 'notes' | 'assets' | 'low_score_variants'>
+>
+export const updateTemplate = (id: string, body: TemplateSettingsPatch) =>
+  request<{ template: EmailTemplate }>(`/api/templates/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+
+/** Write (or rewrite) one language of a template. */
+export const saveTemplateLanguage = (id: string, lang: string, body: TemplateLanguageInput) =>
+  request<{ template: EmailTemplate }>(`/api/templates/${id}/languages/${encodeURIComponent(lang)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+export const deleteTemplateLanguage = (id: string, lang: string) =>
+  request<{ template: EmailTemplate }>(`/api/templates/${id}/languages/${encodeURIComponent(lang)}`, { method: 'DELETE' })
+
+export const deleteTemplate = (id: string) =>
+  request<{ ok: true }>(`/api/templates/${id}`, { method: 'DELETE' })
 export const previewTemplate = (body: {
   subject: string
   html?: string
@@ -335,7 +351,16 @@ export type LeadTemplateOptions = {
   suggested_id: string | null
   chosen_id: string | null
   max_followups: number
-  templates: Array<{ id: string; name: string; language: string | null; audience: string; categories: string[]; steps: number[] }>
+  /** Decided by the country the lead was found in — not a choice on this screen. */
+  lead_language: string
+  templates: Array<{
+    id: string
+    name: string
+    audience: string
+    categories: string[]
+    /** Which steps each language of this template can send. */
+    steps_by_language: Record<string, number[]>
+  }>
 }
 export const getLeadTemplates = (id: string, followup = 0) =>
   request<LeadTemplateOptions>(`/api/leads/${id}/templates?followup=${followup}`)

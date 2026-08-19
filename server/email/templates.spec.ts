@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { resolveTemplate, setTemplatesForTests } from './template-store'
+import { languagesOf, resolveTemplate, setTemplatesForTests, stepsOf } from './template-store'
 import { categorySlug, leadCategoryKeys, searchedCategory } from './category-match'
 import { pickVariantIndex, scoreBand } from './variants'
 import { resolveFindings } from './findings'
@@ -15,21 +15,31 @@ const variant = (subject: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 })
 
-const doc = (over: Record<string, unknown>) => ({
-  _id: over._id ?? '000000000000000000000001',
-  name: 'T',
-  audience: 'custom',
-  categories: [],
-  language: 'en',
-  active: true,
-  priority: 0,
-  low_score_variants: false,
-  findings: {},
-  strings: {},
-  assets: [],
-  messages: [{ followup: 0, variants: [variant('hello')] }],
-  ...over,
-})
+/**
+ * A stored template as the resolver sees it: the pitch at the top level, the
+ * words under `languages`. `language`/`messages` are shorthand for the common
+ * single-language case; pass `languages` directly to write several.
+ */
+const doc = (over: Record<string, unknown> = {}) => {
+  const {
+    language = 'en',
+    messages = [{ followup: 0, variants: [variant('hello')] }],
+    languages,
+    ...rest
+  } = over as { language?: string; messages?: unknown[]; languages?: Record<string, unknown> }
+  return {
+    _id: '000000000000000000000001',
+    name: 'T',
+    audience: 'custom',
+    categories: [],
+    active: true,
+    priority: 0,
+    low_score_variants: false,
+    assets: [],
+    languages: languages ?? { [language]: { messages, findings: {}, strings: {} } },
+    ...rest,
+  }
+}
 
 describe('template resolution', () => {
   beforeEach(() => setTemplatesForTests([]))
@@ -69,6 +79,61 @@ describe('template resolution', () => {
     expect((await resolveTemplate({ category: 'bakery' }, { language: 'pt' }))?.name).toBe('Portuguese')
   })
 
+  /**
+   * One template, many languages: the pitch is chosen once by the same rules,
+   * and the lead's language only decides which words come back — never which
+   * template, and never a second entry in the library.
+   */
+  it('one template serves every language it was written in', async () => {
+    setTemplatesForTests([
+      doc({
+        name: 'Agencies',
+        categories: ['Bakery'],
+        languages: {
+          en: { messages: [{ followup: 0, variants: [variant('english')] }] },
+          pt: { messages: [{ followup: 0, variants: [variant('portuguese')] }] },
+        },
+      }) as never,
+    ])
+    const english = await resolveTemplate({ category: 'bakery' }, { language: 'en' })
+    const portuguese = await resolveTemplate({ category: 'bakery' }, { language: 'pt' })
+    expect(english?.id).toBe(portuguese?.id)
+    expect(english?.name).toBe(portuguese?.name)
+    expect(english?.language).toBe('en')
+    expect(english?.messages[0].variants[0].subject).toBe('english')
+    expect(portuguese?.messages[0].variants[0].subject).toBe('portuguese')
+  })
+
+  it('a language the template was never written in resolves to nothing', async () => {
+    setTemplatesForTests([doc({ languages: { en: { messages: [{ followup: 0, variants: [variant('a')] }] } } }) as never])
+    expect(await resolveTemplate({}, { language: 'ja' })).toBeNull()
+  })
+
+  /** Sticking to the opening template must not stick to its language too. */
+  it('a follow-up keeps the template but follows the lead into its own language', async () => {
+    setTemplatesForTests([
+      doc({
+        _id: 'aaa',
+        name: 'A',
+        languages: {
+          en: { messages: [{ followup: 1, variants: [variant('en bump')] }] },
+          de: { messages: [{ followup: 1, variants: [variant('de bump')] }] },
+        },
+      }) as never,
+    ])
+    const chosen = await resolveTemplate({}, { language: 'de', followupNumber: 1, preferTemplateId: 'aaa' })
+    expect(chosen?.messages[0].variants[0].subject).toBe('de bump')
+  })
+
+  /** A sticky template with nothing in this language must not win by pinning. */
+  it('a pinned template that cannot speak the language yields to one that can', async () => {
+    setTemplatesForTests([
+      doc({ _id: 'pinned', name: 'Pinned', languages: { en: { messages: [{ followup: 0, variants: [variant('a')] }] } } }) as never,
+      doc({ _id: 'speaks', name: 'Speaks', languages: { ja: { messages: [{ followup: 0, variants: [variant('b')] }] } } }) as never,
+    ])
+    expect((await resolveTemplate({}, { language: 'ja', preferTemplateId: 'pinned' }))?.name).toBe('Speaks')
+  })
+
   it('a step with no copy is never chosen — a follow-up must have words', async () => {
     setTemplatesForTests([
       doc({ _id: 'initial', name: 'Initial only' }) as never,
@@ -96,6 +161,24 @@ describe('template resolution', () => {
   it('a disabled template is never resolved', async () => {
     setTemplatesForTests([doc({ active: false }) as never])
     expect(await resolveTemplate({}, { language: 'en' })).toBeNull()
+  })
+
+  /** The language bar must not reshuffle because of insertion order. */
+  it('languages are reported in the fixed UI order, unknown ones ignored', () => {
+    const t = doc({ languages: { ko: {}, en: {}, xx: {}, pt: {} } }) as never
+    expect(languagesOf(t)).toEqual(['en', 'pt', 'ko'])
+  })
+
+  it('a step is only offered where that language actually has variants', () => {
+    const t = doc({
+      languages: {
+        en: { messages: [{ followup: 0, variants: [variant('a')] }, { followup: 1, variants: [] }] },
+        pt: { messages: [{ followup: 0, variants: [variant('b')] }, { followup: 1, variants: [variant('c')] }] },
+      },
+    }) as never
+    expect(stepsOf(t, 'en')).toEqual([0])
+    expect(stepsOf(t, 'pt')).toEqual([0, 1])
+    expect(stepsOf(t, 'ja')).toEqual([])
   })
 })
 

@@ -9,6 +9,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getLeads, getMarkets, getStatus, type Lead, type MarketInfo, type Status } from '../api'
 import { Button, Chip, Input, Select, flagEmoji, langLabel, scoreColor } from './ui'
 import { RowActions, type LeadTabKey } from './RowActions'
+import { EMAIL_LANGUAGES } from '../../shared/types'
 import { ThemeToggle, useTheme } from './ThemeToggle'
 
 const TABS: Array<{ key: LeadTabKey; label: string }> = [
@@ -221,7 +222,7 @@ export function TablePage() {
           </Select>
           <Select value={filters.language} onChange={(e) => setFilter('language', e.target.value)}>
             <option value="">Language: all</option>
-            {['en', 'pt', 'es', 'fr', 'de', 'it', 'zh-TW', 'zh-HK', 'ja', 'ko'].map((l) => (
+            {EMAIL_LANGUAGES.map((l) => (
               <option key={l} value={l}>
                 {langLabel(l)}
               </option>

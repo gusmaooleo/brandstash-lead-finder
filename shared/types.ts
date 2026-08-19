@@ -12,17 +12,19 @@ export type MarketScope =
   | 'korean'
   | 'japanese'
 
-export type EmailLanguage =
-  | 'en'
-  | 'pt'
-  | 'es'
-  | 'fr'
-  | 'de'
-  | 'it'
-  | 'zh-TW'
-  | 'zh-HK'
-  | 'ja'
-  | 'ko'
+/**
+ * Every language outreach can be written in — one per market scope and nothing
+ * else. A language no market can reach would be copy that never gets sent, so
+ * this list and MARKET_COUNTRIES are held in step by the coverage test suite.
+ * Order is the order the UI offers them in.
+ */
+export const EMAIL_LANGUAGES = ['en', 'pt', 'es', 'fr', 'de', 'zh-TW', 'zh-HK', 'ja', 'ko'] as const
+
+export type EmailLanguage = (typeof EMAIL_LANGUAGES)[number]
+
+export function isEmailLanguage(value: unknown): value is EmailLanguage {
+  return typeof value === 'string' && (EMAIL_LANGUAGES as readonly string[]).includes(value)
+}
 
 /**
  * Human review state of a lead in `approval_list`. 'archived' = soft-hidden

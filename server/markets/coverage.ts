@@ -75,8 +75,6 @@ export const COUNTRIES: Record<string, CoverageCountry> = Object.fromEntries(
     cc('DE', 'Germany', 'de', 30),
     cc('CH', 'Switzerland', 'de', 12),
     cc('AT', 'Austria', 'de', 10),
-    // italian — included via the World market only
-    cc('IT', 'Italy', 'it', 30),
     // east asia
     cc('TW', 'Taiwan', 'zh-TW', 15),
     cc('HK', 'Hong Kong', 'zh-HK', 10),
@@ -106,8 +104,10 @@ export const MARKET_COUNTRIES: Record<MarketScope, readonly string[]> = {
   cantonese_hk_macau: CANTONESE,
   korean: KOREAN,
   japanese: JAPANESE,
-  // Italy is included in World so the Italian email version has a market.
-  world: [...ENGLISH, ...PORTUGUESE, ...SPANISH, ...FRENCH, ...GERMAN, 'IT', ...MANDARIN, ...CANTONESE, ...KOREAN, ...JAPANESE],
+  // World is exactly the union of the language markets — never a country whose
+  // language has no market of its own, which would ask for copy in a language
+  // the library is never prompted to write.
+  world: [...ENGLISH, ...PORTUGUESE, ...SPANISH, ...FRENCH, ...GERMAN, ...MANDARIN, ...CANTONESE, ...KOREAN, ...JAPANESE],
 }
 
 export type BlacklistRule = {

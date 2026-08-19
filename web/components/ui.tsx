@@ -1,4 +1,5 @@
 import { forwardRef, type ReactNode, type SelectHTMLAttributes, type InputHTMLAttributes, type ButtonHTMLAttributes } from 'react'
+import type { EmailLanguage } from '../../shared/types'
 
 export function scoreColor(score: number): string {
   if (score >= 7) return 'var(--color-ok)'
@@ -12,9 +13,18 @@ export const STATUS_STYLE: Record<'bom' | 'precisa_melhorar' | 'ausente', { labe
   ausente: { label: 'Missing', cls: 'tint-bad', bar: 'bg-red-400' },
 }
 
-export function Chip({ children, className = '' }: { children: ReactNode; className?: string }) {
+export function Chip({
+  children,
+  className = '',
+  title,
+}: {
+  children: ReactNode
+  className?: string
+  title?: string
+}) {
   return (
     <span
+      title={title}
       className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-paper-2 px-2 py-0.5 text-[11px] text-gray-1 ${className}`}
     >
       {children}
@@ -97,13 +107,13 @@ export function Stat({ label, value, accent }: { label: string; value: ReactNode
   )
 }
 
-const LANG_LABEL: Record<string, string> = {
+/** Every language the markets can reach — see shared/types.ts. */
+const LANG_LABEL: Record<EmailLanguage, string> = {
   en: 'English',
   pt: 'Português',
   es: 'Español',
   fr: 'Français',
   de: 'Deutsch',
-  it: 'Italiano',
   'zh-TW': '中文（台灣）',
   'zh-HK': '中文（香港）',
   ja: '日本語',
@@ -111,7 +121,7 @@ const LANG_LABEL: Record<string, string> = {
 }
 
 export function langLabel(lang: string): string {
-  return LANG_LABEL[lang] ?? lang
+  return LANG_LABEL[lang as EmailLanguage] ?? lang
 }
 
 export function flagEmoji(country: string): string {

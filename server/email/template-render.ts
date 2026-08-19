@@ -1,5 +1,5 @@
 /**
- * Rendering for CUSTOM templates (the HTML written in Settings → Generate).
+ * Rendering for stored templates (the copy written in Settings → Create).
  *
  * A template is HTML with `{{placeholders}}`. Whatever the generator writes,
  * three things are enforced here and cannot be lost:

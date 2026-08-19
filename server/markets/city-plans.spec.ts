@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { CITY_PLANS, citiesOf } from './city-plans'
 import { COUNTRIES, COUNTRY_BLACKLIST, MARKET_COUNTRIES, blacklistedCodes } from './coverage'
 import { MARKETS, scopedMarket } from './markets'
+import { EMAIL_LANGUAGES, isEmailLanguage } from '../../shared/types'
 
 describe('GeoNames city plans seed', () => {
   it('covers every country coverage.ts declares — and nothing else', () => {
@@ -78,8 +79,29 @@ describe('coverage allowlists vs the language blacklist', () => {
     expect([...MARKET_COUNTRIES.korean]).toEqual(['KR'])
     expect([...MARKET_COUNTRIES.japanese]).toEqual(['JP'])
     expect([...MARKET_COUNTRIES.portuguese].sort()).toEqual(['BR', 'PT'])
-    expect(MARKET_COUNTRIES.world).toContain('IT')
     expect(MARKET_COUNTRIES.spanish).not.toContain('ES')
+  })
+
+  it('World is exactly the union of the language markets — no orphan country', () => {
+    const union = new Set(
+      Object.entries(MARKET_COUNTRIES)
+        .filter(([scope]) => scope !== 'world')
+        .flatMap(([, codes]) => codes),
+    )
+    expect([...MARKET_COUNTRIES.world].sort()).toEqual([...union].sort())
+  })
+
+  /**
+   * The copy library offers one language per market. A language no market can
+   * reach would be copy nothing is ever sent in; a country whose language is
+   * not offered would be a lead with no template to answer it.
+   */
+  it('every email language has a market, and every market country an email language', () => {
+    const spoken = new Set(Object.values(COUNTRIES).map((cc) => cc.language))
+    expect([...spoken].sort()).toEqual([...EMAIL_LANGUAGES].sort())
+    for (const country of Object.values(COUNTRIES)) {
+      expect(isEmailLanguage(country.language), `${country.code}: ${country.language}`).toBe(true)
+    }
   })
 
   it('no allowlist contains a country its language blacklists', () => {

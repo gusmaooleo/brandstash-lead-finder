@@ -1,27 +1,47 @@
 /**
- * Settings → Email templates.
+ * Settings → Templates.
  *
- * The library that decides WHICH copy a lead receives: a generic template
- * (no categories) or one bound to Google Business categories, which wins.
- * Builtin rows point at the packs written in code — their targeting and their
- * on/off switch are editable here, their text is not. Custom rows (written by
- * Claude in the Generate tab, or by hand) carry their own HTML.
+ * The library that decides WHICH copy a lead receives: a generic template (no
+ * categories) or one bound to Google Business categories, which wins.
+ *
+ * A row is a TEMPLATE — one pitch, listed once no matter how many languages it
+ * carries. Opening it shows what the pitch targets, then a bar of the
+ * languages it is written in: pick one and the editor below is that language's
+ * words. Adding a language is a tab, not a second template, so the targeting
+ * of a pitch can never drift between its own translations.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   deleteTemplate as deleteTemplateApi,
-  previewStoredTemplate,
+  deleteTemplateLanguage,
+  saveTemplateLanguage,
   updateTemplate,
   type EmailTemplate,
   type TemplateLibrary,
+  type TemplateSettingsPatch,
 } from '../api'
 import { CategoryPicker } from './CategoryPicker'
-import { GmailFrame } from './GmailFrame'
+import { CopyEditor } from './TemplateEditor'
+import { canonicalMessages, emptyDraft, filled, messagesFromSteps, stepsFromMessages, type Step } from '../template-copy'
 import { Button, Chip, Input, Select, langLabel } from './ui'
 
-/** The sequence is as long as the follow-up setting allows. */
-const stepLabel = (followup: number): string => (followup === 0 ? 'Initial email' : `Follow-up ${followup}`)
+/** The pitch's own fields — everything about a template that is not words. */
+type Settings = {
+  name: string
+  audience: string
+  categories: string[]
+  low_score_variants: boolean
+  assets: string[]
+}
+
+const settingsOf = (t: EmailTemplate): Settings => ({
+  name: t.name,
+  audience: t.audience,
+  categories: [...t.categories],
+  low_score_variants: t.low_score_variants,
+  assets: t.assets.length ? [...t.assets] : [''],
+})
 
 function CategorySummary({ categories }: { categories: string[] }) {
   if (!categories.length) return <Chip>every category</Chip>
@@ -50,78 +70,81 @@ export function TemplatesTab({
   senderEmail: string
   onChanged: () => Promise<void> | void
 }) {
+  const stepCount = library.max_followups + 1
   const [openId, setOpenId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<EmailTemplate | null>(null)
+  const [settings, setSettings] = useState<Settings | null>(null)
+  /** Every language of the open template, kept while tabs are switched. */
+  const [versions, setVersions] = useState<Record<string, Step[]>>({})
+  const [lang, setLang] = useState<string>('en')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null)
-  const [previewIndex, setPreviewIndex] = useState(0)
-  const [previewLang, setPreviewLang] = useState('en')
 
-  const open = useCallback((template: EmailTemplate) => {
-    setOpenId(template._id)
-    setDraft(JSON.parse(JSON.stringify(template)) as EmailTemplate)
-    setPreview(null)
-    setPreviewIndex(0)
-    setError(null)
-  }, [])
+  const template = useMemo(() => library.templates.find((t) => t._id === openId) ?? null, [library.templates, openId])
 
-  const dirty = useMemo(() => {
-    if (!draft) return false
-    const original = library.templates.find((t) => t._id === draft._id)
-    return original ? JSON.stringify(original) !== JSON.stringify(draft) : false
-  }, [draft, library.templates])
+  const open = useCallback(
+    (t: EmailTemplate) => {
+      setOpenId(t._id)
+      setSettings(settingsOf(t))
+      setVersions(
+        Object.fromEntries(
+          t.language_codes.map((l) => [l, stepsFromMessages(t.languages[l].messages, stepCount, t.low_score_variants)]),
+        ),
+      )
+      setLang(t.language_codes[0] ?? 'en')
+      setError(null)
+    },
+    [stepCount],
+  )
 
-  /**
-   * Every template is previewable. A custom one is rendered from the DRAFT so
-   * edits show live; a built-in is rendered by the server through the very
-   * code path that sends it, in the chosen language and message of the
-   * sequence.
-   */
-  useEffect(() => {
-    if (!draft) {
-      setPreview(null)
-      return
-    }
-    let cancelled = false
-    const done = (r: { subject: string; html: string }) => !cancelled && setPreview(r)
-    const fail = () => !cancelled && setPreview(null)
-
-    void previewStoredTemplate(draft._id, { lang: previewLang, followup: previewIndex })
-      .then(done)
-      .catch(fail)
-    return () => {
-      cancelled = true
-    }
-  }, [draft, previewIndex, previewLang])
-
-  /** Edits one variant of one step, keeping the rest of the draft untouched. */
-  const patchVariant = (messageIndex: number, variantIndex: number, patch: { subject?: string; html?: string }) => {
-    if (!draft) return
-    const messages = draft.messages.map((m, i) =>
-      i !== messageIndex ? m : { ...m, variants: m.variants.map((v, j) => (j === variantIndex ? { ...v, ...patch } : v)) },
-    )
-    setDraft({ ...draft, messages })
+  const close = () => {
+    setOpenId(null)
+    setSettings(null)
+    setVersions({})
   }
 
+  /** What changed since the template was opened — settings, words, or both. */
+  const changes = useMemo(() => {
+    if (!template || !settings) return { settings: false, languages: [] as string[], added: [] as string[] }
+    const base = settingsOf(template)
+    const cleanAssets = (a: string[]) => a.map((x) => x.trim()).filter(Boolean)
+    const settingsChanged =
+      JSON.stringify({ ...base, assets: cleanAssets(base.assets) }) !==
+      JSON.stringify({ ...settings, assets: cleanAssets(settings.assets) })
+    const languages = Object.keys(versions).filter((l) => {
+      const stored = template.languages[l]
+      if (!stored) return messagesFromSteps(versions[l]).length > 0
+      return canonicalMessages(stored.messages, stepCount) !== JSON.stringify(messagesFromSteps(versions[l]))
+    })
+    return { settings: settingsChanged, languages, added: Object.keys(versions).filter((l) => !template.languages[l]) }
+  }, [template, settings, versions, stepCount])
+
+  const dirty = changes.settings || changes.languages.length > 0
+
   const save = async () => {
-    if (!draft) return
+    if (!template || !settings) return
     setSaving(true)
     setError(null)
     try {
-      await updateTemplate(draft._id, {
-        name: draft.name,
-        categories: draft.categories,
-        active: draft.active,
-        audience: draft.audience,
-        language: draft.language ?? undefined,
-        priority: draft.priority,
-        notes: draft.notes,
-        messages: draft.messages,
-      })
+      if (changes.settings) {
+        const patch: TemplateSettingsPatch = {
+          name: settings.name,
+          audience: settings.audience,
+          categories: settings.categories,
+          low_score_variants: settings.low_score_variants,
+          assets: settings.assets.map((a) => a.trim()).filter(Boolean),
+        }
+        await updateTemplate(template._id, patch)
+      }
+      for (const code of changes.languages) {
+        const messages = messagesFromSteps(versions[code])
+        if (!messages.length) throw new Error(`${langLabel(code)} has no message with both a subject and a body`)
+        await saveTemplateLanguage(template._id, code, {
+          messages,
+          findings: template.languages[code]?.findings,
+          strings: template.languages[code]?.strings,
+        })
+      }
       await onChanged()
-      setOpenId(null)
-      setDraft(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -129,26 +152,76 @@ export function TemplatesTab({
     }
   }
 
-  const toggleActive = async (template: EmailTemplate) => {
+  /**
+   * A new language starts as the current one's skeleton — same steps, same
+   * angles, same bands, no words. Translating is filling boxes in, not
+   * rebuilding the shape of a sequence that already works.
+   */
+  const addLanguage = (code: string) => {
+    const shape = versions[lang] ?? []
+    setVersions({
+      ...versions,
+      [code]: shape.length
+        ? shape.map((s) => ({ variants: s.variants.map((v) => emptyDraft(v.band)) }))
+        : Array.from({ length: stepCount }, () => ({ variants: [emptyDraft()] })),
+    })
+    setLang(code)
+  }
+
+  const removeLanguage = async (code: string) => {
+    if (!template) return
+    const stored = Boolean(template.languages[code])
+    if (stored && !window.confirm(`Delete the ${langLabel(code)} version of “${template.name}”?`)) return
+    const rest = Object.keys(versions).filter((l) => l !== code)
+    if (!rest.length) return setError('A template needs at least one language — delete the template instead.')
     try {
-      await updateTemplate(template._id, { active: !template.active })
+      if (stored) {
+        await deleteTemplateLanguage(template._id, code)
+        await onChanged()
+      }
+      setVersions(Object.fromEntries(rest.map((l) => [l, versions[l]])))
+      setLang(rest[0])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const toggleActive = async (t: EmailTemplate) => {
+    try {
+      await updateTemplate(t._id, { active: !t.active })
       await onChanged()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }
 
-  const remove = async (template: EmailTemplate) => {
-    if (!window.confirm(`Delete “${template.name}”? Leads in its categories fall back to the generic template.`)) return
+  const remove = async (t: EmailTemplate) => {
+    if (!window.confirm(`Delete “${t.name}” and every language of it? Leads in its categories fall back to the generic template.`))
+      return
     try {
-      await deleteTemplateApi(template._id)
+      await deleteTemplateApi(t._id)
       await onChanged()
-      setOpenId(null)
-      setDraft(null)
+      close()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }
+
+  const missingLanguages = library.languages.filter((l) => !versions[l])
+
+  /**
+   * Languages of one template should run the same sequence. When they don't,
+   * leads drop out of the follow-ups depending on where they live — worth a
+   * sentence, not a silent difference nobody would think to look for.
+   */
+  const uneven = useMemo(() => {
+    const reach = Object.entries(versions).map(([l, steps]) => ({
+      language: l,
+      steps: steps.filter((s) => s.variants.some(filled)).length,
+    }))
+    const longest = Math.max(0, ...reach.map((r) => r.steps))
+    return reach.filter((r) => r.steps < longest)
+  }, [versions])
 
   return (
     <div className="grid gap-4">
@@ -156,25 +229,30 @@ export function TemplatesTab({
 
       <div className="rounded-2xl border border-line bg-card">
         <div className="border-b border-line px-5 py-3 text-[12px] text-gray-2">
-          A lead gets the template whose categories match it; the most specific one wins. Nothing matching → the
-          generic template below.
+          A lead gets the template whose categories match it, in the language of the country it was found in. The most
+          specific match wins; nothing matching → the generic template.
         </div>
+        {!library.templates.length && (
+          <div className="px-5 py-8 text-center text-[12.5px] text-gray-3">
+            No template yet — write your first one in the Create tab.
+          </div>
+        )}
         <ul>
           {library.templates.map((t) => (
             <li key={t._id} className="border-b border-line last:border-b-0">
               <div className="flex flex-wrap items-center gap-3 px-5 py-3">
-                <button
-                  className="min-w-0 flex-1 text-left"
-                  onClick={() => (openId === t._id ? (setOpenId(null), setDraft(null)) : open(t))}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className={`truncate text-[13.5px] font-medium ${t.active ? 'text-ink' : 'text-gray-3'}`}>
-                      {t.name}
-                    </span>
-                    {t.language && <Chip>{langLabel(t.language)}</Chip>}
+                <button className="min-w-0 flex-1 text-left" onClick={() => (openId === t._id ? close() : open(t))}>
+                  <span className={`block truncate text-[13.5px] font-medium ${t.active ? 'text-ink' : 'text-gray-3'}`}>
+                    {t.name}
                   </span>
-                  <span className="mt-1 flex items-center gap-2 text-[11.5px] text-gray-3">
-                    {t.audience} · {t.messages.length} message{t.messages.length === 1 ? '' : 's'}
+                  <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-gray-3">
+                    {t.audience}
+                    <span>·</span>
+                    {t.language_codes.map((l) => (
+                      <Chip key={l} className="!text-[10px]">
+                        {langLabel(l)}
+                      </Chip>
+                    ))}
                   </span>
                 </button>
                 <CategorySummary categories={t.categories} />
@@ -182,141 +260,195 @@ export function TemplatesTab({
                   <input type="checkbox" checked={t.active} onChange={() => void toggleActive(t)} />
                   active
                 </label>
-                <Button variant="ghost" className="!px-3 !py-1.5 !text-[12px]" onClick={() => (openId === t._id ? (setOpenId(null), setDraft(null)) : open(t))}>
+                <Button
+                  variant="ghost"
+                  className="!px-3 !py-1.5 !text-[12px]"
+                  onClick={() => (openId === t._id ? close() : open(t))}
+                >
                   {openId === t._id ? 'Close' : 'Edit'}
                 </Button>
               </div>
 
-              {openId === t._id && draft && (
-                <div className="grid gap-4 border-t border-line bg-paper-2/40 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,560px)]">
-                  <div className="grid content-start gap-3.5">
-                    <label className="grid gap-1">
-                      <span className="text-[11.5px] text-gray-2">Name</span>
-                      <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-                    </label>
-
-                    <div className="grid gap-1">
-                      <span className="text-[11.5px] text-gray-2">
-                        Categories — empty means every category (generic)
-                      </span>
-                      <CategoryPicker
-                        catalog={catalog}
-                        selected={draft.categories}
-                        onChange={(categories) => setDraft({ ...draft, categories })}
-                      />
+              {openId === t._id && settings && (
+                <div className="grid gap-4 border-t border-line bg-paper-2/40 px-5 py-4">
+                  {/* ── the pitch: shared by every language ── */}
+                  <div className="grid gap-3.5 rounded-2xl border border-line bg-card p-4">
+                    <div className="text-[11px] uppercase tracking-wide text-gray-3">
+                      This template — the same in every language
                     </div>
-
-                    <div className="grid gap-3.5 sm:grid-cols-2">
+                    <div className="grid gap-3.5 lg:grid-cols-[minmax(0,1fr)_220px]">
+                      <label className="grid gap-1">
+                        <span className="text-[11.5px] text-gray-2">Name</span>
+                        <Input value={settings.name} onChange={(e) => setSettings({ ...settings, name: e.target.value })} />
+                      </label>
                       <label className="grid gap-1">
                         <span className="text-[11.5px] text-gray-2">Audience label</span>
                         <Input
-                          value={draft.audience}
-                          onChange={(e) => setDraft({ ...draft, audience: e.target.value })}
+                          value={settings.audience}
+                          onChange={(e) => setSettings({ ...settings, audience: e.target.value })}
                         />
                       </label>
-                      <label className="grid gap-1">
-                        <span className="text-[11.5px] text-gray-2">Language</span>
-                        <Select
-                          value={draft.language ?? ''}
-                          onChange={(e) => setDraft({ ...draft, language: e.target.value })}
-                        >
-                          {library.languages.map((l) => (
-                            <option key={l} value={l}>
-                              {langLabel(l)}
-                            </option>
-                          ))}
-                        </Select>
+                    </div>
+
+                    <div className="grid gap-1">
+                      <span className="text-[11.5px] text-gray-2">Categories — empty means every category (generic)</span>
+                      <CategoryPicker
+                        catalog={catalog}
+                        selected={settings.categories}
+                        onChange={(categories) => setSettings({ ...settings, categories })}
+                      />
+                    </div>
+
+                    <div className="grid gap-3.5 lg:grid-cols-2">
+                      <label className="flex items-start gap-2 rounded-xl border border-line bg-paper-2 px-3.5 py-2.5">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={settings.low_score_variants}
+                          onChange={(e) => setSettings({ ...settings, low_score_variants: e.target.checked })}
+                        />
+                        <span className="grid gap-0.5">
+                          <span className="text-[12px] text-ink">Change the tone when the lead's score is poor</span>
+                          <span className="text-[11px] text-gray-3">
+                            Angles marked for a low score go to struggling profiles, the others to strong ones.
+                          </span>
+                        </span>
                       </label>
-                    </div>
 
-                    <div className="grid gap-2">
-                      {draft.messages.map((m, i) => (
-                        <details key={m.followup} open={i === previewIndex} className="rounded-xl border border-line bg-card">
-                          <summary
-                            className="cursor-pointer px-3.5 py-2 text-[12px] text-gray-1"
-                            onClick={() => setPreviewIndex(i)}
-                          >
-                            {stepLabel(m.followup)} · {m.variants.length} variant{m.variants.length === 1 ? '' : 's'}
-                          </summary>
-                          <div className="grid gap-3 px-3.5 pb-3.5">
-                            {m.variants.map((v, vi) => (
-                              <div key={vi} className="grid gap-2 rounded-lg border border-line bg-paper-2 p-2.5">
-                                <span className="text-[10.5px] uppercase tracking-wide text-gray-3">
-                                  Variant {vi + 1}
-                                  {v.band ? ` · ${v.band === 'low' ? 'low score' : 'strong profile'}` : ''}
-                                </span>
-                                <Input
-                                  value={v.subject}
-                                  placeholder="Subject"
-                                  onChange={(e) => patchVariant(i, vi, { subject: e.target.value })}
-                                />
-                                <textarea
-                                  className="h-56 w-full rounded-lg border border-line bg-card px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-ink outline-none focus:border-line-2"
-                                  value={v.html}
-                                  spellCheck={false}
-                                  onChange={(e) => patchVariant(i, vi, { html: e.target.value })}
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Button variant="green" disabled={!dirty || saving} onClick={save}>
-                        {saving ? 'Saving…' : 'Save template'}
-                      </Button>
-                      <Button variant="danger" className="!px-3 !py-1.5 !text-[12px]" onClick={() => void remove(draft)}>
-                        Delete
-                      </Button>
+                      <div className="grid gap-1">
+                        <span className="text-[11.5px] text-gray-2">
+                          Image URLs — available to the copy as {'{{logo_url}}'}, {'{{asset_2}}'}…
+                        </span>
+                        {settings.assets.map((a, i) => (
+                          <span key={i} className="flex items-center gap-1.5">
+                            <Input
+                              className="min-w-0 flex-1 font-mono !text-[11.5px]"
+                              value={a}
+                              placeholder="https://…/logo.svg"
+                              onChange={(e) => {
+                                const next = [...settings.assets]
+                                next[i] = e.target.value
+                                setSettings({ ...settings, assets: next })
+                              }}
+                            />
+                            <button
+                              className="shrink-0 text-[12px] text-gray-3 hover:text-ink"
+                              onClick={() =>
+                                setSettings({
+                                  ...settings,
+                                  assets: settings.assets.length === 1 ? [''] : settings.assets.filter((_, j) => j !== i),
+                                })
+                              }
+                              aria-label="Remove image"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                        <button
+                          className="justify-self-start text-[11.5px] text-gray-2 underline-offset-2 hover:text-ink hover:underline"
+                          onClick={() => setSettings({ ...settings, assets: [...settings.assets, ''] })}
+                        >
+                          + add image
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="min-w-0">
-                    <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                      {draft.messages.map((m) => m.followup).map((f, i) => (
-                        <button
-                          key={f}
-                          onClick={() => setPreviewIndex(i)}
-                          className={`rounded-full border px-2.5 py-1 text-[11.5px] transition-colors ${
-                            previewIndex === i
+                  {/* ── the words: one language at a time ── */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="mr-1 text-[11px] uppercase tracking-wide text-gray-3">Language</span>
+                    {Object.keys(versions)
+                      .sort((a, b) => library.languages.indexOf(a) - library.languages.indexOf(b))
+                      .map((l) => (
+                        <span
+                          key={l}
+                          className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] transition-colors ${
+                            l === lang
                               ? 'border-brand-green-line bg-brand-green-soft text-brand-green'
-                              : 'border-line bg-paper-2 text-gray-2 hover:text-ink'
+                              : 'border-line bg-paper-2 text-gray-2'
                           }`}
                         >
-                          {stepLabel(f)}
-                        </button>
+                          <button onClick={() => setLang(l)}>
+                            {langLabel(l)}
+                            {changes.added.includes(l) ? ' · new' : ''}
+                            {!changes.added.includes(l) && changes.languages.includes(l) ? ' ·' : ''}
+                          </button>
+                          {Object.keys(versions).length > 1 && (
+                            <button
+                              className="opacity-60 hover:opacity-100"
+                              onClick={() => void removeLanguage(l)}
+                              aria-label={`Remove ${langLabel(l)}`}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </span>
                       ))}
+                    {missingLanguages.length > 0 && (
                       <Select
-                        className="ml-auto !py-1 !text-[11.5px]"
-                        value={previewLang}
-                        onChange={(e) => setPreviewLang(e.target.value)}
+                        className="!py-1 !text-[11.5px]"
+                        value=""
+                        onChange={(e) => e.target.value && addLanguage(e.target.value)}
                       >
-                        {library.languages.map((l) => (
+                        <option value="">+ add language</option>
+                        {missingLanguages.map((l) => (
                           <option key={l} value={l}>
                             {langLabel(l)}
                           </option>
                         ))}
                       </Select>
-                    </div>
-                    {preview ? (
-                      <GmailFrame
-                        subject={preview.subject}
-                        senderName={senderName}
-                        senderEmail={senderEmail}
-                        html={preview.html}
-                        height={560}
-                      />
-                    ) : (
-                      <div className="rounded-xl border border-line bg-paper-2 px-4 py-6 text-center text-[12px] text-gray-3">
-                        Rendering preview…
-                      </div>
                     )}
-                    <p className="mt-2 text-[11px] text-gray-3">
-                      Sample lead, rendered by the same code that sends the real email.
-                    </p>
                   </div>
+
+                  {uneven.length > 0 && (
+                    <div className="rounded-xl border px-3.5 py-2.5 text-[12px] tint-warn">
+                      {uneven.map((r) => `${langLabel(r.language)} stops after ${r.steps === 0 ? 'nothing' : r.steps === 1 ? 'the initial email' : `follow-up ${r.steps - 1}`}`).join('; ')}
+                      . Leads reading those languages leave the sequence earlier than the others.
+                    </div>
+                  )}
+
+                  {versions[lang] && (
+                    <CopyEditor
+                      library={library}
+                      steps={versions[lang]}
+                      onChange={(steps) => setVersions({ ...versions, [lang]: steps })}
+                      language={lang}
+                      lowScoreVariants={settings.low_score_variants}
+                      assets={settings.assets.map((a) => a.trim()).filter(Boolean)}
+                      findings={t.languages[lang]?.findings}
+                      strings={t.languages[lang]?.strings}
+                      senderName={senderName}
+                      senderEmail={senderEmail}
+                      footer={
+                        <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+                          <Button variant="green" disabled={!dirty || saving} onClick={() => void save()}>
+                            {saving ? 'Saving…' : 'Save changes'}
+                          </Button>
+                          {dirty && (
+                            <span className="text-[11.5px] text-gray-3">
+                              {[
+                                changes.settings ? 'template settings' : null,
+                                changes.languages.length
+                                  ? `${changes.languages.map(langLabel).join(', ')}`
+                                  : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')}{' '}
+                              unsaved
+                            </span>
+                          )}
+                          <Button
+                            variant="danger"
+                            className="ml-auto !px-3 !py-1.5 !text-[12px]"
+                            onClick={() => void remove(t)}
+                          >
+                            Delete template
+                          </Button>
+                        </div>
+                      }
+                    />
+                  )}
                 </div>
               )}
             </li>
