@@ -1,0 +1,421 @@
+/** Typed fetch helpers for the local API. */
+
+import type { AuditEvent, DiscoveryCounters, EmailLanguage, EmailStyle, GlobePoint, LeadContact, LeadDelivery, LeadOutreach, LeadStatus, MarketScope } from '../shared/types'
+
+export type Lead = {
+  _id: string
+  place_id: string
+  analysis_id: string
+  normalized_domain: string | null
+  name: string
+  address: string | null
+  city_label: string
+  country: string
+  language: EmailLanguage
+  market_scope: MarketScope
+  website: string | null
+  google_rating: number | null
+  review_count: number | null
+  category: string | null
+  types: string[]
+  score: number
+  location: { lat: number; lng: number } | null
+  contact: LeadContact
+  email_style: EmailStyle
+  status: LeadStatus
+  delivery: LeadDelivery & { style?: EmailStyle | null; followup?: number | null }
+  outreach: LeadOutreach
+  discovery: { query: string; city_label: string; discovered_at: string }
+  approved_at: string | null
+  archived_at: string | null
+  audit_trail: AuditEvent[]
+  created_at: string
+}
+
+export type Analysis = {
+  _id: string
+  place_id: string
+  summary: Record<string, unknown> & {
+    editorial_summary: string | null
+    hours_text: string[] | null
+    photos_count: number
+  }
+  scoring: {
+    rules_version: string
+    overallScore: number
+    priorityActions: string[]
+    warnings: string[]
+    categories: Array<{
+      category: string
+      label: string
+      status: 'bom' | 'precisa_melhorar' | 'ausente'
+      value: string | null
+      recommendation: string
+      score: number
+    }>
+  }
+  website_audit: {
+    pages_checked: Array<{ url: string; status: number | null; emails_found: number; note?: string }>
+    robots_blocked: string[]
+    forms: string[]
+    phones: string[]
+  } | null
+}
+
+export type Status = {
+  active: boolean
+  market_scope: MarketScope
+  categories_total: number
+  cities_total: number
+  test_city: string | null
+  leads_per_hour: number
+  window_count: number
+  window_started_at: string | null
+  next_run_at: string | null
+  counters: DiscoveryCounters
+  queue_size: number
+  current_city: string | null
+  current_category: string | null
+  selected_categories: string[]
+  selected_countries: string[]
+  categories_explored: number
+  last_error: string | null
+  email_mode: 'dry_run' | 'smtp' | 'resend'
+  sender_name: string
+  sender_email: string | null
+  followup_after_days: number
+  counts: { pending: number; approved: number; sent: number; failed: number; archived: number; followup: number }
+}
+
+export type MarketInfo = {
+  scope: MarketScope
+  label: string
+  countries: Array<{ code: string; name: string; language: EmailLanguage; cities: number }>
+}
+
+export type EmailPreview = {
+  subject: string
+  subject_variant: number
+  band: 'low' | 'high' | null
+  style: EmailStyle
+  followup: number
+  language: EmailLanguage
+  html: string
+  text: string | null
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+  })
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string }
+  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`)
+  return body
+}
+
+export const getStatus = () => request<Status>('/api/status')
+export const getMarkets = () => request<MarketInfo[]>('/api/markets')
+export const getGlobePoints = () => request<{ points: GlobePoint[] }>('/api/globe/points')
+export const startDiscovery = () => request<{ ok: true }>('/api/discovery/start', { method: 'POST' })
+export const stopDiscovery = () => request<{ ok: true }>('/api/discovery/stop', { method: 'POST' })
+export const saveConfig = (config: {
+  market_scope?: MarketScope
+  test_city?: string | null
+  selected_categories?: string[]
+  selected_countries?: string[]
+}) => request<{ ok: true }>('/api/discovery/config', { method: 'PUT', body: JSON.stringify(config) })
+export const getCategories = () => request<{ categories: string[] }>('/api/categories')
+
+/* ── settings (credentials live encrypted on the server) ─────────────────── */
+
+export type AppSettings = {
+  email: {
+    mode: 'dry_run' | 'smtp' | 'resend'
+    from_name: string
+    from_email: string
+    from_label: string
+    reply_to_name: string
+    reply_to_email: string
+    reply_to_label: string
+    resend_key_masked: string | null
+    smtp_host: string
+    smtp_port: number
+    smtp_secure: boolean
+    smtp_user: string
+    smtp_pass_masked: string | null
+    unsubscribe_base_url: string
+  }
+  offer: {
+    brand_name: string
+    what_we_sell: string
+    site_url: string
+    logo_url: string
+    use_analysis_in_copy: boolean
+  }
+  ai: { anthropic_key_masked: string | null; model: string }
+  places: { api_key_masked: string | null }
+  discovery: { leads_per_hour: number; lead_retention_days: number; followup_after_days: number }
+  landing: { mongodb_uri_masked: string | null; db_name: string }
+  encryption_ready: boolean
+  email_ready: boolean
+  email_not_ready_reason: string | null
+}
+
+/** A secret field: omit to keep what is stored, '' to clear it. */
+export type AppSettingsPatch = {
+  email?: Partial<{
+    mode: 'dry_run' | 'smtp' | 'resend'
+    from_name: string
+    from_email: string
+    reply_to_name: string
+    reply_to_email: string
+    resend_key: string
+    smtp_host: string
+    smtp_port: number
+    smtp_secure: boolean
+    smtp_user: string
+    smtp_pass: string
+    unsubscribe_base_url: string
+  }>
+  offer?: Partial<{
+    brand_name: string
+    what_we_sell: string
+    site_url: string
+    logo_url: string
+    use_analysis_in_copy: boolean
+  }>
+  ai?: Partial<{ anthropic_key: string; model: string }>
+  places?: Partial<{ api_key: string }>
+  discovery?: Partial<{ leads_per_hour: number; lead_retention_days: number; followup_after_days: number }>
+  landing?: Partial<{ mongodb_uri: string; db_name: string }>
+}
+
+export type AnthropicModel = { id: string; display_name: string; created_at: string | null }
+
+export const getSettings = () => request<AppSettings>('/api/settings')
+export const saveSettings = (patch: AppSettingsPatch) =>
+  request<AppSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) })
+/* ── email templates ─────────────────────────────────────────────────────── */
+
+export type TemplateMessage = { followup: number; subject: string; html: string; text?: string | null }
+
+export type EmailTemplate = {
+  _id: string
+  name: string
+  kind: 'builtin' | 'custom'
+  builtin_pack: 'business_note' | 'agency_note' | 'dashboard' | null
+  audience: string
+  categories: string[]
+  language: string | null
+  active: boolean
+  priority: number
+  messages: TemplateMessage[]
+  generation: { model: string | null; preset: string | null; brief: string | null; assets: string[]; at: string | null } | null
+  notes: string
+  updated_at: string
+}
+
+export type TemplateLibrary = {
+  templates: EmailTemplate[]
+  placeholders: Array<{ token: string; description: string }>
+  presets: Array<{ id: string; label: string; description: string }>
+  languages: string[]
+  model: string
+  ai_ready: boolean
+}
+
+export const getTemplates = () => request<TemplateLibrary>('/api/templates')
+export const createTemplate = (body: {
+  name: string
+  audience?: string
+  categories?: string[]
+  language?: string
+  messages: TemplateMessage[]
+  generation?: { model?: string; preset?: string; brief?: string; assets?: string[] } | null
+  notes?: string
+}) => request<{ template: EmailTemplate }>('/api/templates', { method: 'POST', body: JSON.stringify(body) })
+export const updateTemplate = (id: string, body: Partial<Omit<EmailTemplate, '_id' | 'kind' | 'updated_at'>>) =>
+  request<{ template: EmailTemplate }>(`/api/templates/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteTemplate = (id: string) =>
+  request<{ ok: true }>(`/api/templates/${id}`, { method: 'DELETE' })
+/** Renders a STORED template (built-in included) through the real send path. */
+export const previewStoredTemplate = (id: string, opts: { lang?: string; followup?: number } = {}) => {
+  const params = new URLSearchParams()
+  if (opts.lang) params.set('lang', opts.lang)
+  if (opts.followup) params.set('followup', String(opts.followup))
+  const qs = params.toString()
+  return request<{
+    subject: string
+    html: string
+    text: string | null
+    template_name: string
+    style: string
+    followup: number
+    language: string
+  }>(`/api/templates/${id}/preview${qs ? `?${qs}` : ''}`)
+}
+
+export const previewTemplate = (body: { subject: string; html: string; language?: string; assets?: string[] }) =>
+  request<{ subject: string; html: string; text: string }>('/api/templates/preview', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+export const generateTemplate = (body: {
+  preset: string
+  brief: string
+  language: string
+  audience: string
+  categories: string[]
+  assets: string[]
+}) =>
+  request<{ messages: TemplateMessage[]; model: string; preset: string; language: string }>(
+    '/api/templates/generate',
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+
+export const listAnthropicModels = (apiKey?: string) =>
+  request<{ models: AnthropicModel[] }>('/api/settings/anthropic/models', {
+    method: 'POST',
+    body: JSON.stringify({ api_key: apiKey ?? '' }),
+  })
+
+export const getLeads = (params: Record<string, string>) =>
+  request<{ source: string; leads: Lead[]; total: number; page: number; page_size: number }>(
+    `/api/leads?${new URLSearchParams(params)}`,
+  )
+export const getLead = (id: string) => request<{ source: string; lead: Lead; analysis: Analysis | null }>(`/api/leads/${id}`)
+export const getEmailPreview = (id: string, opts: { lang?: string; style?: EmailStyle; followup?: number } = {}) => {
+  const params = new URLSearchParams()
+  if (opts.lang) params.set('lang', opts.lang)
+  if (opts.style) params.set('style', opts.style)
+  if (opts.followup) params.set('followup', String(opts.followup))
+  const qs = params.toString()
+  return request<EmailPreview>(`/api/leads/${id}/email-preview${qs ? `?${qs}` : ''}`)
+}
+export const setEmailStyle = (id: string, style: EmailStyle) =>
+  request<{ ok: true }>(`/api/leads/${id}/email-style`, { method: 'PUT', body: JSON.stringify({ style }) })
+export const sendFollowup = (id: string) =>
+  request<{ ok: boolean; delivery: LeadDelivery }>(`/api/approved/${id}/followup`, { method: 'POST' })
+export const stopFollowups = (id: string) =>
+  request<{ ok: true }>(`/api/approved/${id}/followup-stop`, { method: 'POST' })
+export const doNotContactApproved = (id: string) =>
+  request<{ ok: true }>(`/api/approved/${id}/do-not-contact`, { method: 'POST' })
+
+export const approveLead = (id: string, recipient: string) =>
+  request<{ ok: boolean; lead: Lead; delivery: LeadDelivery }>(`/api/leads/${id}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ recipient }),
+  })
+export const skipLead = (id: string) => request<{ ok: true }>(`/api/leads/${id}/skip`, { method: 'POST' })
+export const reopenLead = (id: string) => request<{ ok: true }>(`/api/leads/${id}/reopen`, { method: 'POST' })
+export const doNotContactLead = (id: string) => request<{ ok: true }>(`/api/leads/${id}/do-not-contact`, { method: 'POST' })
+export const selectEmail = (id: string, email: string) =>
+  request<{ ok: true }>(`/api/leads/${id}/select-email`, { method: 'POST', body: JSON.stringify({ email }) })
+export const addEmail = (id: string, email: string) =>
+  request<{ ok: true }>(`/api/leads/${id}/add-email`, { method: 'POST', body: JSON.stringify({ email }) })
+export const retryDelivery = (id: string) =>
+  request<{ ok: boolean; delivery: LeadDelivery }>(`/api/approved/${id}/retry`, { method: 'POST' })
+
+/* ── cold-email analytics (/email-analytics) ─────────────────────────────
+   Measures CONSENTED LANDING VISITS — never "email opens" (no pixel). */
+
+export type SendLandingStatus = 'visited' | 'no_visit' | 'untracked' | 'failed' | 'queued'
+
+export type EmailSendRow = {
+  id: string
+  place_id: string
+  lead_name: string
+  recipient: string
+  language: string | null
+  campaign: string | null
+  style: EmailStyle | null
+  template_id: string | null
+  variant: number | null
+  followup: number
+  attempt: number
+  status: 'queued' | 'sent' | 'sent_dry_run' | 'failed'
+  sent_at: string | null
+  message_id: string | null
+  error: string | null
+  backfilled: boolean
+  created_at: string | null
+  tracked: boolean
+  /** Masked (never the full hash, never the raw rid). */
+  tracking_hash_masked: string | null
+  landing_status: SendLandingStatus
+  landing_visit: {
+    matched: boolean
+    event_count: number
+    first_observed_at: string | null
+    last_observed_at: string | null
+    synced_at: string | null
+  }
+}
+
+export type BreakdownRow = {
+  key: string
+  sent: number
+  visited: number
+  rate: number
+  sessions: number
+  median_hours_to_first_visit: number | null
+}
+
+export type AnalyticsOverview = {
+  range: { from: string; to: string }
+  totals: {
+    emails_sent: number
+    visited_sends: number
+    landing_visit_rate: number
+    unique_visited_leads: number
+    consented_sessions: number
+    median_hours_to_first_visit: number | null
+    tracked_sends: number
+    untracked_sends: number
+    failed_sends: number
+    queued_sends: number
+  }
+  timeseries: Array<{ day: string; sent: number; visited: number; rate: number }>
+  breakdowns: Record<'style' | 'template' | 'variant' | 'campaign' | 'attempt', BreakdownRow[]>
+  sync: {
+    last_synced_at: string | null
+    last_sync_ok: boolean | null
+    last_sync_error: string | null
+    last_sync_sends: number
+    last_sync_events: number
+    /** Cold-email visits on the landing that belong to no send of ours. */
+    last_sync_unattributed: number
+  }
+}
+
+export type SyncResult = {
+  ok: boolean
+  synced_at: string
+  sends_with_tracking: number
+  matched_sends: number
+  events_seen: number
+  unattributed_events: number
+  backfilled_rows: number
+  error: string | null
+}
+
+export type SendTimelineEntry = { at: string | null; event: string; detail?: string }
+
+const toQuery = (params: Record<string, string>) => {
+  const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== ''))
+  const qs = new URLSearchParams(clean).toString()
+  return qs ? `?${qs}` : ''
+}
+
+export const getAnalyticsOverview = (params: Record<string, string>) =>
+  request<AnalyticsOverview>(`/api/analytics/overview${toQuery(params)}`)
+export const getAnalyticsSends = (params: Record<string, string>) =>
+  request<{ total: number; page: number; page_size: number; sends: EmailSendRow[] }>(
+    `/api/analytics/sends${toQuery(params)}`,
+  )
+export const getSendDetail = (id: string) =>
+  request<{ send: EmailSendRow; timeline: SendTimelineEntry[] }>(`/api/analytics/sends/${id}`)
+export const runAnalyticsSync = () =>
+  request<SyncResult>('/api/analytics/sync', { method: 'POST' })
+export const sendsCsvUrl = (params: Record<string, string>) => `/api/analytics/sends.csv${toQuery(params)}`

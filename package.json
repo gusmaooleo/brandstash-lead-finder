@@ -1,0 +1,51 @@
+{
+  "name": "brandstash-lead-finder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "description": "Local lead finder for Brandstash prospecting — Places API discovery, Brandstash-parity scoring, human-approved outreach.",
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"tsx watch server/index.ts\" \"vite\"",
+    "dev:api": "tsx watch server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts",
+    "seed:cities": "tsx scripts/build-city-plans.ts",
+    "test": "vitest run",
+    "test:tracking": "MONGODB_URI=mongodb://localhost:27018/brandstash_leads_tracking_it tsx scripts/it-email-tracking.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "lucide-react": "^1.31.0",
+    "maplibre-gl": "^6.4.0",
+    "mongoose": "^8.9.0",
+    "nodemailer": "^6.9.16",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.2",
+    "tailwind-merge": "^3.6.0",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@fontsource-variable/geist": "^5.1.0",
+    "@fontsource-variable/geist-mono": "^5.1.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/express": "^4.17.21",
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^22.10.0",
+    "@types/nodemailer": "^6.4.17",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^3.0.0"
+  }
+}

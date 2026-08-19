@@ -1,0 +1,34 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    # Host 27018: the Brandstash superproject's dev mongo already owns 27017.
+    # Inside the compose network the app talks to mongo:27017 directly.
+    ports:
+      - '27018:27017'
+    volumes:
+      - leadfinder-mongo:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - '4000:4000'
+    env_file: .env
+    environment:
+      # Overrides the host-oriented value in .env (localhost:27018): inside the
+      # compose network mongo is reached by service name on the container port.
+      MONGODB_URI: mongodb://mongo:27017/brandstash_leads
+      APP_PORT: '4000'
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+volumes:
+  leadfinder-mongo:

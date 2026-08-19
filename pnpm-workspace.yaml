@@ -1,0 +1,8 @@
+# Standalone workspace root — stops pnpm from walking up into the brandstash
+# superproject workspace one directory above.
+packages: []
+
+# esbuild's postinstall must run (pnpm ≥10 blocks unapproved build scripts;
+# pnpm 11 turns the block into a hard install error).
+onlyBuiltDependencies:
+  - esbuild

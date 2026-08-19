@@ -1,0 +1,236 @@
+/* Brandstash Lead Finder — dark "mission control" identity, with a light
+   warm-paper mode behind the header toggle. Every component reads the same
+   tokens (--color-paper/-ink/-line…): dark values live in @theme (:root),
+   the light palette overrides them under `html.light` below. The outreach
+   EMAIL is always light — this file themes only the app. */
+
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@theme {
+  --font-sans: "Geist Variable", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* dark ink surfaces (paper = page, card = raised, paper-2/3 = insets) */
+  --color-paper: #0a0a0b;
+  --color-paper-2: #151517;
+  --color-paper-3: #1e1e21;
+  --color-card: #101012;
+  --color-ink: #f2f2f0;
+  --color-ink-soft: #d9d9d6;
+
+  /* neutral text on dark ink */
+  --color-gray-1: #a6a6ac;
+  --color-gray-2: #7b7b82;
+  --color-gray-3: #56565d;
+
+  /* hairlines */
+  --color-line: #222226;
+  --color-line-2: #303037;
+
+  /* unified brand accent green */
+  --color-brand-green: #00d492;
+  --color-brand-green-soft: rgb(0 212 146 / 0.12);
+  --color-brand-green-line: rgb(0 212 146 / 0.4);
+
+  /* status accents — brightened for dark surfaces */
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
+
+  /* globe stage backdrop (matches each theme's CARTO basemap ocean) */
+  --color-stage: #0e1013;
+
+  /* analytics chart series — CVD-validated pairs per surface (dataviz pass:
+     dark #3b82f6/#059669 on #101012, light #2563eb/#059669 on #ffffff) */
+  --color-chart-sent: #3b82f6;
+  --color-chart-visited: #059669;
+
+  /* shadcn-style tokens consumed by the mapcn ui components (map.tsx) */
+  --color-background: #0a0a0b;
+  --color-foreground: #f2f2f0;
+  --color-muted: #1e1e21;
+  --color-muted-foreground: #7b7b82;
+  --color-popover: #151517;
+  --color-popover-foreground: #f2f2f0;
+  --color-accent: #1e1e21;
+  --color-border: #303037;
+  --color-ring: #00d492;
+
+  --ease-brand: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ── light mode (header toggle; persisted in localStorage) ─────────────── */
+html.light {
+  color-scheme: light;
+  --color-paper: #fbfbfa;
+  --color-paper-2: #f1f0ec;
+  --color-paper-3: #e9e8e3;
+  --color-card: #ffffff;
+  --color-ink: #0b0b0c;
+  --color-ink-soft: #161618;
+  --color-gray-1: #57575b;
+  --color-gray-2: #84848a;
+  --color-gray-3: #a8a8ad;
+  --color-line: #e2e1dc;
+  --color-line-2: #d2d1cb;
+  --color-ok: #059669;
+  --color-warn: #d97706;
+  --color-bad: #dc2626;
+  --color-stage: #e3e8ea;
+  --color-chart-sent: #2563eb;
+  --color-chart-visited: #059669;
+  --color-background: #fbfbfa;
+  --color-foreground: #0b0b0c;
+  --color-muted: #f1f0ec;
+  --color-muted-foreground: #84848a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0b0b0c;
+  --color-accent: #f1f0ec;
+  --color-border: #d2d1cb;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  color-scheme: dark; /* native dark selects / date pickers / scrollbars */
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2e2e34 transparent;
+}
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #2e2e34;
+  border-radius: 3px;
+}
+html.light * {
+  scrollbar-color: #cfcec8 transparent;
+}
+html.light *::-webkit-scrollbar-thumb {
+  background-color: #cfcec8;
+}
+
+/* Status tints — theme-aware translucent chips (border + surface + text). */
+.tint-good {
+  border-color: rgb(52 211 153 / 0.25);
+  background-color: rgb(52 211 153 / 0.1);
+  color: #6ee7b7;
+}
+.tint-warn {
+  border-color: rgb(251 191 36 / 0.3);
+  background-color: rgb(251 191 36 / 0.1);
+  color: #fcd34d;
+}
+.tint-bad {
+  border-color: rgb(248 113 113 / 0.25);
+  background-color: rgb(248 113 113 / 0.1);
+  color: #fca5a5;
+}
+button.tint-good:not(:disabled):hover {
+  background-color: rgb(52 211 153 / 0.2);
+}
+button.tint-bad:not(:disabled):hover {
+  background-color: rgb(248 113 113 / 0.2);
+}
+.tint-warn-text {
+  color: #fcd34d;
+}
+.tint-bad-text {
+  color: #fca5a5;
+}
+html.light .tint-good {
+  border-color: #a7f3d0;
+  background-color: #ecfdf5;
+  color: #047857;
+}
+html.light .tint-warn {
+  border-color: #fde68a;
+  background-color: #fffbeb;
+  color: #b45309;
+}
+html.light .tint-bad {
+  border-color: #fecaca;
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+html.light button.tint-good:not(:disabled):hover {
+  background-color: #d1fae5;
+}
+html.light button.tint-bad:not(:disabled):hover {
+  background-color: #fee2e2;
+}
+html.light .tint-warn-text {
+  color: #b45309;
+}
+html.light .tint-bad-text {
+  color: #b91c1c;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Quiet entrance used across the app (from the Brandstash landing). */
+@keyframes brand-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.brand-rise {
+  animation: brand-rise 640ms var(--ease-brand) both;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(0 212 146 / 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgb(0 212 146 / 0);
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.8s var(--ease-brand) infinite;
+}
+
+/* Frosted HUD chips floating over the globe stage. */
+.hud {
+  background: rgb(10 10 11 / 0.55);
+  border: 1px solid rgb(255 255 255 / 0.07);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+html.light .hud {
+  background: rgb(255 255 255 / 0.68);
+  border-color: rgb(0 0 0 / 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-rise,
+  .pulse-dot {
+    animation: none;
+  }
+}
