@@ -83,6 +83,8 @@ export type Status = {
   sender_name: string
   sender_email: string | null
   followup_after_days: number
+  /** Follow-ups after the initial email (1–5). Step numbers run 0..this. */
+  followup_steps: number
   counts: { pending: number; approved: number; sent: number; failed: number; archived: number; followup: number }
 }
 
@@ -363,7 +365,6 @@ export const previewOneOff = (id: string, body: { subject: string; html?: string
 export type LeadTemplateOptions = {
   suggested_id: string | null
   chosen_id: string | null
-  max_followups: number
   /** Decided by the country the lead was found in — not a choice on this screen. */
   lead_language: string
   templates: Array<{

@@ -59,6 +59,8 @@ api.get('/status', async (_req, res) => {
     sender_name: settings().email.from.name,
     sender_email: settings().email.from.email || null,
     followup_after_days: settings().followupAfterDays,
+    /** How long a sequence runs — the lead screen numbers its steps by this. */
+    followup_steps: settings().followupSteps,
     counts,
   })
 })
@@ -518,7 +520,6 @@ api.get('/leads/:id/templates', async (req, res) => {
   res.json({
     suggested_id: suggestedId,
     chosen_id: chosenTemplateId(found.doc, followup),
-    max_followups: maxSends() - 1,
     lead_language: language,
     templates: templates.map((t) => ({
       id: String(t._id),

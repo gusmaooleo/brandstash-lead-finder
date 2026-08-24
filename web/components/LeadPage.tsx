@@ -48,7 +48,12 @@ export function LeadPage() {
   const [source, setSource] = useState<'approval_list' | 'approved'>('approval_list')
   const [preview, setPreview] = useState<EmailPreview | null>(null)
   const [previewLang, setPreviewLang] = useState<string | null>(null)
-  const [previewFollowup, setPreviewFollowup] = useState(0)
+  /**
+   * Which step of the sequence is on screen. null = follow the lead: a lead
+   * that was already written to opens on the message that would go out NEXT,
+   * not on the one it has already received. Picking a step pins it.
+   */
+  const [previewStep, setPreviewStep] = useState<number | null>(null)
   const [templateOptions, setTemplateOptions] = useState<LeadTemplateOptions | null>(null)
   // A one-off email: written here, sent to this lead, never saved.
   const [oneOff, setOneOff] = useState<{ subject: string; body: string; html: boolean } | null>(null)
@@ -74,7 +79,7 @@ export function LeadPage() {
     setLead(null)
     setPreview(null)
     setPreviewLang(null)
-    setPreviewFollowup(0)
+    setPreviewStep(null)
     setShowAllEmails(false)
     setApproveResult(navNotice)
     setActionError(null)
@@ -82,6 +87,18 @@ export function LeadPage() {
     void load().catch((e) => setLoadError(e instanceof Error ? e.message : String(e)))
     void getStatus().then(setAppStatus).catch(() => {})
   }, [id, load, navNotice])
+
+  /** How long the sequence runs — one setting, never a number spelled here. */
+  const followupSteps = appStatus?.followup_steps ?? 2
+  /**
+   * The step a send would use right now: 0 while the initial email is still
+   * unsent, then follow-up N once N messages have gone out. Clamped to the
+   * last step, so an exhausted sequence shows the message it ended on — the
+   * same clamp the send route applies.
+   */
+  const nextStep =
+    source === 'approved' && lead?.outreach ? Math.min(lead.outreach.count, followupSteps) : 0
+  const previewFollowup = previewStep ?? nextStep
 
   useEffect(() => {
     if (!lead) return
@@ -148,7 +165,7 @@ export function LeadPage() {
       lead &&
       lead.outreach &&
       lead.outreach.count >= 1 &&
-      lead.outreach.count < 3 &&
+      lead.outreach.count <= followupSteps &&
       !lead.outreach.stopped_at &&
       ['sent', 'sent_dry_run'].includes(lead.delivery.state) &&
       lead.outreach.last_sent_at &&
@@ -588,20 +605,23 @@ export function LeadPage() {
                 </Select>
               )}
 
-              {source === 'approved' &&
-                lead.outreach &&
-                lead.outreach.count >= 1 &&
-                lead.outreach.count <= (templateOptions?.max_followups ?? 2) && (
-                  <button
-                    onClick={() => setPreviewFollowup((f) => (f ? 0 : lead.outreach.count))}
-                    className={`rounded-lg border border-line px-3 py-1.5 text-[12px] transition-colors ${
-                      previewFollowup ? 'bg-brand-green-soft font-medium text-brand-green' : 'text-gray-2 hover:text-ink'
-                    }`}
-                    title="Preview the next follow-up email"
-                  >
-                    Follow-up {lead.outreach.count}/{templateOptions?.max_followups ?? 2}
-                  </button>
-                )}
+              {/* Which step of the sequence is on screen. Opens on the one
+                  that would be sent next; every step stays reachable. */}
+              {!oneOff && source === 'approved' && lead.outreach && lead.outreach.count >= 1 && (
+                <Select
+                  className="w-[190px]"
+                  value={String(previewFollowup)}
+                  onChange={(e) => setPreviewStep(Number(e.target.value))}
+                  title="Which message of the sequence to look at"
+                >
+                  {Array.from({ length: followupSteps + 1 }, (_, step) => (
+                    <option key={step} value={step}>
+                      {step === 0 ? 'Initial email' : `Follow-up ${step}`}
+                      {step < lead.outreach.count ? ' · sent' : step === nextStep ? ' · next' : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </div>
 
             {noTemplates && (
@@ -738,7 +758,7 @@ export function LeadPage() {
                         onClick={() => run('followup', () => sendFollowup(id).then(load))}
                         title="Send the next follow-up (different variant, “it’s me again” tone)"
                       >
-                        {busy === 'followup' ? 'Sending…' : `Send follow-up ${lead.outreach.count + 1}/3`}
+                        {busy === 'followup' ? 'Sending…' : `Send follow-up ${nextStep}/${followupSteps}`}
                       </Button>
                       <Button variant="ghost" disabled={busy !== null} onClick={() => run('fstop', () => stopFollowups(id).then(load))}>
                         Stop follow-ups
