@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { languagesOf, resolveTemplate, setTemplatesForTests, stepsOf } from './template-store'
-import { categorySlug, leadCategoryKeys, searchedCategory } from './category-match'
+import { catalogCategoryQuery, categorySlug, leadCategoryKeys, searchedCategory } from './category-match'
 import { pickVariantIndex, scoreBand } from './variants'
 import { resolveFindings } from './findings'
 import { applyPlaceholders, renderCustomMessage, type TemplateContext } from './template-render'
@@ -197,6 +197,58 @@ describe('category matching', () => {
     expect(leadCategoryKeys({ category: 'marketing_agency', discovery: { search_category: 'Design agency' } })).toEqual(
       expect.arrayContaining(['marketing_agency', 'design_agency']),
     )
+  })
+})
+
+/**
+ * The lead-list filter. Its condition must select exactly the leads
+ * `searchedCategory` names — including the legacy ones, which carry the
+ * category only inside their query.
+ */
+describe('filtering leads by catalog category', () => {
+  /** Does the condition accept this lead? Mirrors what Mongo would answer. */
+  const matches = (
+    query: Record<string, unknown>,
+    lead: { discovery: { search_category?: string | null; query: string } },
+  ) => {
+    const branches = query.$or as Array<Record<string, any>>
+    const stored = lead.discovery.search_category ?? null
+    return branches.some((b) => {
+      if (b['discovery.search_category']?.$in) return b['discovery.search_category'].$in.includes(stored)
+      if (b['discovery.search_category'] === null && stored !== null) return false
+      return (b['discovery.query'].$in as RegExp[]).some((re) => re.test(lead.discovery.query))
+    })
+  }
+
+  it('an empty selection is no condition at all — never a clause matching nothing', () => {
+    expect(catalogCategoryQuery([])).toBeNull()
+    expect(catalogCategoryQuery(['  ', ''])).toBeNull()
+  })
+
+  it('selects on the stored field and on the legacy query alike', () => {
+    const q = catalogCategoryQuery(['Bakery'])!
+    expect(matches(q, { discovery: { search_category: 'Bakery', query: 'Bakery in Lisbon, Portugal' } })).toBe(true)
+    expect(matches(q, { discovery: { query: 'Bakery in Lisbon, Portugal' } })).toBe(true)
+    expect(matches(q, { discovery: { query: 'Bakery equipment supplier in Lisbon, Portugal' } })).toBe(false)
+    expect(matches(q, { discovery: { search_category: 'Cafe', query: 'Cafe in Lisbon, Portugal' } })).toBe(false)
+  })
+
+  it('accepts every picked category and drops duplicates', () => {
+    const q = catalogCategoryQuery(['Bakery', 'Cafe', 'Bakery'])!
+    expect((q.$or as any[])[0]['discovery.search_category'].$in).toEqual(['Bakery', 'Cafe'])
+    expect(matches(q, { discovery: { query: 'Cafe in Porto, Portugal' } })).toBe(true)
+  })
+
+  it('a catalog name is matched literally, never as a pattern', () => {
+    const q = catalogCategoryQuery(['Bar & grill'])!
+    expect(matches(q, { discovery: { query: 'Bar & grill in Austin, United States' } })).toBe(true)
+    expect(matches(q, { discovery: { query: 'Bar X grill in Austin, United States' } })).toBe(false)
+  })
+
+  it('round-trips whatever searchedCategory reported — the facet list and the filter agree', () => {
+    const lead = { discovery: { query: 'Marketing agency in Salvador, Brazil' } }
+    const q = catalogCategoryQuery([searchedCategory(lead)!])!
+    expect(matches(q, lead)).toBe(true)
   })
 })
 

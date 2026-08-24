@@ -296,6 +296,8 @@ export function TemplatesTab({
                         catalog={catalog}
                         selected={settings.categories}
                         onChange={(categories) => setSettings({ ...settings, categories })}
+                        title="The lead categories this template is written for"
+                        footer={(n) => (n ? `Suggested first for these ${n}.` : 'Empty = generic, every category.')}
                       />
                     </div>
 

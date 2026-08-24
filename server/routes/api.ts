@@ -19,6 +19,7 @@ import { languagesOf, resolveTemplate, stepsOf, templateById, templateOptionsFor
 import { DeadRecipientError } from '../email/dead-addresses'
 import { beginTrackedSend, completeTrackedSend, failTrackedSend } from '../tracking/send-log'
 import { campaignFor } from '../tracking/landing-url'
+import { catalogCategoryQuery, searchedCategory } from '../email/category-match'
 import type { EmailLanguage, MarketScope } from '../../shared/types'
 import type { PlaceProfileSummary } from '../scoring/types'
 import type { RulesAnalysisResult } from '../scoring/analyze'
@@ -190,7 +191,8 @@ type LeadFilters = {
   status?: string
   country?: string
   language?: string
-  category?: string
+  /** Catalog categories — repeatable (?category=A&category=B). */
+  category?: string | string[]
   score_min?: string
   score_max?: string
   rating_min?: string
@@ -250,7 +252,13 @@ function buildQuery(f: LeadFilters): Record<string, unknown> {
   const q: Record<string, unknown> = {}
   if (f.country) q.country = f.country
   if (f.language) q.language = f.language
-  if (f.category) q.category = f.category
+  // The catalog vocabulary, not the Places primaryType stored in `category`:
+  // that field says "service" for an advertising agency, a marketing agency
+  // and a marketing consultant alike, which is not a filter anyone can use.
+  const categories = catalogCategoryQuery(
+    Array.isArray(f.category) ? f.category : f.category ? [f.category] : [],
+  )
+  if (categories) Object.assign(q, categories)
   if (f.score_min || f.score_max) {
     q.score = {
       ...(f.score_min ? { $gte: Number(f.score_min) } : {}),
@@ -276,42 +284,79 @@ function buildQuery(f: LeadFilters): Record<string, unknown> {
 }
 
 /**
+ * Which collection a status tab reads and the query that IS that tab, filters
+ * folded in. One place, so the table, its pagination and its category facets
+ * can never disagree about what "the Sent tab" means.
+ *
  * status filter values: pending | skipped | do_not_contact | archived
  * (approval_list), approved | sent | failed | followup (approved collection —
  * followup = sent leads due for their next touch, oldest send first).
  */
-api.get('/leads', async (req, res) => {
-  const f = req.query as LeadFilters & { page?: string; page_size?: string }
-  const status = f.status ?? 'pending'
-  const base = buildQuery(f)
-  const page = Math.max(1, Number.parseInt(f.page ?? '1', 10) || 1)
-  const pageSize = Math.min(100, Math.max(1, Number.parseInt(f.page_size ?? '50', 10) || 50))
-
-  let docs: LeadDoc[]
-  let total: number
-  let source: 'approval_list' | 'approved'
+function leadScope(status: string, base: Record<string, unknown>) {
   if (status === 'approved' || status === 'sent' || status === 'failed' || status === 'followup') {
-    source = 'approved'
     const q = { ...base }
     if (status === 'sent') q['delivery.state'] = { $in: ['sent', 'sent_dry_run'] }
     if (status === 'failed') q['delivery.state'] = 'failed'
     if (status === 'followup') Object.assign(q, followupDueQuery())
-    total = await Approved.countDocuments(q)
-    docs = await sortedLeadPage(
-      Approved,
+    return {
+      model: Approved,
       q,
-      f,
-      status === 'followup' ? { 'outreach.last_sent_at': 1 } : { created_at: -1 },
-      page,
-      pageSize,
-    )
-  } else {
-    source = 'approval_list'
-    const q = { ...base, status }
-    total = await ApprovalList.countDocuments(q)
-    docs = await sortedLeadPage(ApprovalList, q, f, { created_at: -1 }, page, pageSize)
+      source: 'approved' as const,
+      defaultSort: (status === 'followup' ? { 'outreach.last_sent_at': 1 } : { created_at: -1 }) as Record<string, 1 | -1>,
+    }
   }
+  return {
+    model: ApprovalList,
+    q: { ...base, status },
+    source: 'approval_list' as const,
+    defaultSort: { created_at: -1 } as Record<string, 1 | -1>,
+  }
+}
+
+api.get('/leads', async (req, res) => {
+  const f = req.query as LeadFilters & { page?: string; page_size?: string }
+  const page = Math.max(1, Number.parseInt(f.page ?? '1', 10) || 1)
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(f.page_size ?? '50', 10) || 50))
+
+  const { model, q, source, defaultSort } = leadScope(f.status ?? 'pending', buildQuery(f))
+  const total = await model.countDocuments(q)
+  const docs = await sortedLeadPage(model, q, f, defaultSort, page, pageSize)
   res.json({ source, leads: docs, total, page, page_size: pageSize })
+})
+
+/**
+ * The category filter's options: the catalog categories that actually exist in
+ * this tab, with how many leads each holds — an option that can only ever
+ * return an empty page is not an option worth offering.
+ *
+ * Deliberately NOT narrowed by the other filters: the counts would shift under
+ * the owner's cursor every time a country or a score bound moved. The grouping
+ * key is the pair `searchedCategory` reads, so one lead is counted once and
+ * under exactly the name the filter will match it by.
+ */
+api.get('/leads/categories', async (req, res) => {
+  const { model, q } = leadScope(String(req.query.status ?? 'pending'), {})
+  const rows = (await model.aggregate([
+    { $match: q },
+    {
+      $group: {
+        _id: { search_category: '$discovery.search_category', query: '$discovery.query' },
+        count: { $sum: 1 },
+      },
+    },
+  ])) as Array<{ _id: { search_category?: string | null; query?: string | null }; count: number }>
+
+  const counts = new Map<string, number>()
+  for (const row of rows) {
+    const name = searchedCategory({ discovery: row._id })
+    if (!name) continue
+    counts.set(name, (counts.get(name) ?? 0) + row.count)
+  }
+  res.json({
+    categories: [...counts]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count })),
+  })
 })
 
 async function findLeadAnywhere(id: string): Promise<{ doc: LeadDoc; source: 'approval_list' | 'approved' } | null> {

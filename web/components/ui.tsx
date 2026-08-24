@@ -1,5 +1,5 @@
 import { forwardRef, type ReactNode, type SelectHTMLAttributes, type InputHTMLAttributes, type ButtonHTMLAttributes } from 'react'
-import type { EmailLanguage } from '../../shared/types'
+import { searchedCategory, type EmailLanguage } from '../../shared/types'
 
 export function scoreColor(score: number): string {
   if (score >= 7) return 'var(--color-ok)'
@@ -122,6 +122,20 @@ const LANG_LABEL: Record<EmailLanguage, string> = {
 
 export function langLabel(lang: string): string {
   return LANG_LABEL[lang as EmailLanguage] ?? lang
+}
+
+/**
+ * What a lead's category IS to a human — the catalog name it was discovered
+ * under, the same words the picker filters by. The Places primaryType is the
+ * fallback only: it collapses agencies, consultants and marketers alike into
+ * "service", so it can name a lead but never group one.
+ */
+export function leadCategoryLabel(lead: {
+  category?: string | null
+  types?: string[]
+  discovery?: { query?: string | null; search_category?: string | null } | null
+}): string {
+  return searchedCategory(lead) ?? lead.category ?? lead.types?.[0] ?? '—'
 }
 
 export function flagEmoji(country: string): string {

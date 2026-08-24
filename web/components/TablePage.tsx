@@ -6,10 +6,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { getLeads, getMarkets, getStatus, type Lead, type MarketInfo, type Status } from '../api'
-import { Button, Chip, Input, Select, flagEmoji, langLabel, scoreColor } from './ui'
+import { getLeadCategories, getLeads, getMarkets, getStatus, type Lead, type MarketInfo, type Status } from '../api'
+import { Button, Chip, Input, Select, flagEmoji, langLabel, leadCategoryLabel, scoreColor } from './ui'
+import { CategoryPicker } from './CategoryPicker'
 import { RowActions, type LeadTabKey } from './RowActions'
 import { EMAIL_LANGUAGES } from '../../shared/types'
+import { EMPTY_LEAD_FILTERS, anyLeadFilter, leadFilterParams, type LeadFilters } from '../lead-filters'
 import { ThemeToggle, useTheme } from './ThemeToggle'
 
 const TABS: Array<{ key: LeadTabKey; label: string }> = [
@@ -22,25 +24,6 @@ const TABS: Array<{ key: LeadTabKey; label: string }> = [
   { key: 'do_not_contact', label: 'Do not contact' },
   { key: 'archived', label: 'Archived' },
 ]
-
-type Filters = {
-  country: string
-  language: string
-  category: string
-  score_min: string
-  score_max: string
-  rating_min: string
-  rating_max: string
-  has_email: string
-  date_from: string
-  date_to: string
-  q: string
-}
-
-const EMPTY_FILTERS: Filters = {
-  country: '', language: '', category: '', score_min: '', score_max: '',
-  rating_min: '', rating_max: '', has_email: '', date_from: '', date_to: '', q: '',
-}
 
 /** Sorting happens in Mongo (whole result set, not just this page) — these
     keys are sent to GET /api/leads as ?sort=&dir=. */
@@ -57,7 +40,8 @@ export function TablePage() {
 
   const [status, setStatus] = useState<Status | null>(null)
   const [markets, setMarkets] = useState<MarketInfo[]>([])
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
+  const [filters, setFilters] = useState<LeadFilters>(EMPTY_LEAD_FILTERS)
+  const [categoryFacets, setCategoryFacets] = useState<Array<{ name: string; count: number }>>([])
   const [leads, setLeads] = useState<Lead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -78,12 +62,16 @@ export function TablePage() {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = { status: tab, page: String(page), page_size: '50' }
+      const params: Record<string, string | string[]> = {
+        ...leadFilterParams(filters),
+        status: tab,
+        page: String(page),
+        page_size: '50',
+      }
       if (sort) {
         params.sort = sort.key
         params.dir = sort.dir === -1 ? 'desc' : 'asc'
       }
-      for (const [k, v] of Object.entries(filters)) if (v) params[k] = v
       const res = await getLeads(params)
       setLeads(res.leads)
       setTotal(res.total)
@@ -97,6 +85,15 @@ export function TablePage() {
 
   // Changing tab, filters or sort always restarts at page 1.
   useEffect(() => setPage(1), [tab, filters, sort])
+
+  // The category options belong to the tab, not to the other filters — see
+  // GET /api/leads/categories.
+  const refreshFacets = useCallback(() => {
+    void getLeadCategories(tab)
+      .then((r) => setCategoryFacets(r.categories))
+      .catch(() => setCategoryFacets([]))
+  }, [tab])
+  useEffect(refreshFacets, [refreshFacets])
 
   useEffect(() => {
     void refresh()
@@ -112,8 +109,15 @@ export function TablePage() {
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]))
   }, [markets])
 
-  const setFilter = (key: keyof Filters, value: string) => setFilters((f) => ({ ...f, [key]: value }))
-  const hasFilters = Object.values(filters).some(Boolean)
+  const categoryNames = useMemo(() => categoryFacets.map((c) => c.name), [categoryFacets])
+  const categoryCounts = useMemo(
+    () => Object.fromEntries(categoryFacets.map((c) => [c.name, c.count])),
+    [categoryFacets],
+  )
+
+  const setFilter = <K extends keyof LeadFilters>(key: K, value: LeadFilters[K]) =>
+    setFilters((f) => ({ ...f, [key]: value }))
+  const hasFilters = anyLeadFilter(filters)
 
   const runRowAction = async (lead: Lead, action: string, fn: () => Promise<unknown>) => {
     setRowBusy(`${lead._id}:${action}`)
@@ -121,6 +125,8 @@ export function TablePage() {
     try {
       await fn()
       await refresh()
+      // The row just left (or joined) this tab — its category count moved with it.
+      refreshFacets()
     } catch (e) {
       setError(`${lead.name}: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -233,7 +239,16 @@ export function TablePage() {
             <option value="yes">Has public email</option>
             <option value="no">No public email</option>
           </Select>
-          <Input className="w-36" placeholder="Category…" value={filters.category} onChange={(e) => setFilter('category', e.target.value)} />
+          <CategoryPicker
+            catalog={categoryNames}
+            counts={categoryCounts}
+            selected={filters.category}
+            onChange={(next) => setFilter('category', next)}
+            title="Filter by the categories these leads were discovered under"
+            footer={(n) =>
+              n ? `Showing only these ${n}.` : `${categoryNames.length} categor${categoryNames.length === 1 ? 'y' : 'ies'} in this tab.`
+            }
+          />
           <span className="flex items-center gap-1">
             <Input className="w-[74px]" type="number" min={0} max={10} step={0.5} placeholder="Score ≥" value={filters.score_min} onChange={(e) => setFilter('score_min', e.target.value)} />
             <Input className="w-[74px]" type="number" min={0} max={10} step={0.5} placeholder="Score ≤" value={filters.score_max} onChange={(e) => setFilter('score_max', e.target.value)} />
@@ -248,7 +263,7 @@ export function TablePage() {
             <Input className="w-[128px]" type="date" value={filters.date_to} onChange={(e) => setFilter('date_to', e.target.value)} />
           </span>
           {hasFilters && (
-            <Button variant="ghost" className="!px-3 !py-1.5 !text-[12px]" onClick={() => setFilters(EMPTY_FILTERS)}>
+            <Button variant="ghost" className="!px-3 !py-1.5 !text-[12px]" onClick={() => setFilters(EMPTY_LEAD_FILTERS)}>
               Clear
             </Button>
           )}
@@ -345,8 +360,8 @@ export function TablePage() {
                   <td className="px-3 py-2.5 text-gray-1">
                     <span className="block truncate">{lead.city_label}</span>
                   </td>
-                  <td className="px-3 py-2.5 text-gray-1">
-                    <span className="block truncate">{lead.category ?? lead.types[0] ?? '—'}</span>
+                  <td className="px-3 py-2.5 text-gray-1" title={lead.category ?? undefined}>
+                    <span className="block truncate">{leadCategoryLabel(lead)}</span>
                   </td>
                   <td className="truncate px-3 py-2.5 text-gray-1">
                     {flagEmoji(lead.country)} {lead.country} · {langLabel(lead.language)}

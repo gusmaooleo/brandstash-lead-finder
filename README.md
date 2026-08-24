@@ -200,6 +200,12 @@ shadcn registry — `components.json` + the `@/` alias are configured, so
 leads, green dots are sent leads (Places-API geometry, plan-city coordinates as fallback);
 hovering shows the business + score, clicking opens the lead, dragging spins the globe by hand.
 The full-width table with every field lives at `/table` ("Full table" button on the feed panel).
+Both lead lists share one filter set (`web/lead-filters.ts`), and every filter is applied by Mongo
+over the whole result set — never over the fetched page. The category filter is the same
+multi-select the header uses, offering the catalog categories that tab actually holds with their
+lead counts (`GET /api/leads/categories`); it matches the category a lead was **searched under**
+("Marketing agency"), not the Places `primaryType`, which calls agencies, consultants and
+marketers alike "service".
 
 - Basemap: CARTO dark-matter tiles (© [CARTO](https://carto.com),
   © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors) via mapcn's defaults.

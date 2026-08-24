@@ -27,6 +27,27 @@ export function isEmailLanguage(value: unknown): value is EmailLanguage {
 }
 
 /**
+ * The CATALOG category a lead was discovered under ("Marketing agency") — the
+ * vocabulary the header picker, the table filter and the templates all speak.
+ * It is stored on the lead; leads queued before the field existed carry it
+ * only inside their search query ("<category> in <City, Country>"), and no
+ * catalog name contains " in ", so the LAST separator is the one that splits.
+ *
+ * Lives here because the server queries by it and the UI shows it: one rule,
+ * or the column and the filter would disagree about what a lead's category is.
+ */
+export function searchedCategory(lead: {
+  discovery?: { query?: string | null; search_category?: string | null } | null
+}): string | null {
+  const stored = lead.discovery?.search_category
+  if (stored) return stored
+  const query = lead.discovery?.query
+  if (!query) return null
+  const cut = query.lastIndexOf(' in ')
+  return cut > 0 ? query.slice(0, cut).trim() : null
+}
+
+/**
  * Human review state of a lead in `approval_list`. 'archived' = soft-hidden
  * by the retention sweep (LEAD_RETENTION_DAYS); reopenable at any time.
  */

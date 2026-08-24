@@ -264,7 +264,13 @@ export function CreateTab({
 
             <div className="grid gap-1">
               <span className="text-[11.5px] text-gray-2">Categories this template will be sent to</span>
-              <CategoryPicker catalog={catalog} selected={categories} onChange={setCategories} />
+              <CategoryPicker
+                catalog={catalog}
+                selected={categories}
+                onChange={setCategories}
+                title="The lead categories this template is written for"
+                footer={(n) => (n ? `Suggested first for these ${n}.` : 'Empty = generic, every category.')}
+              />
               <span className="text-[11px] text-gray-3">
                 Empty = generic. Bound categories make this the first suggestion for those leads; any template can still
                 be picked by hand on the lead screen.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getCategories,
+  getLeadCategories,
   getLeads,
   getMarkets,
   getStatus,
@@ -12,13 +13,14 @@ import {
   type MarketInfo,
   type Status,
 } from './api'
-import { Button, Chip, Input, Select, Stat, flagEmoji, langLabel, scoreColor } from './components/ui'
+import { Button, Chip, Input, Select, Stat, flagEmoji, langLabel, leadCategoryLabel, scoreColor } from './components/ui'
 import { CategoryPicker } from './components/CategoryPicker'
 import { CountryPicker, flagOf } from './components/CountryPicker'
 import { LeadGlobe } from './components/Globe'
 import { RowActions } from './components/RowActions'
 import { ThemeToggle, useTheme } from './components/ThemeToggle'
 import { EMAIL_LANGUAGES, type MarketScope } from '../shared/types'
+import { EMPTY_LEAD_FILTERS, anyLeadFilter, leadFilterParams, type LeadFilters } from './lead-filters'
 
 const LOGO_URL = 'https://pub-62b9434b63214cb4b5b74cebb8d4c261.r2.dev/content/brandstash-icon-black.svg'
 
@@ -34,25 +36,6 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'do_not_contact', label: 'DNC' },
   { key: 'archived', label: 'Archived' },
 ]
-
-type Filters = {
-  country: string
-  language: string
-  category: string
-  score_min: string
-  score_max: string
-  rating_min: string
-  rating_max: string
-  has_email: string
-  date_from: string
-  date_to: string
-  q: string
-}
-
-const EMPTY_FILTERS: Filters = {
-  country: '', language: '', category: '', score_min: '', score_max: '',
-  rating_min: '', rating_max: '', has_email: '', date_from: '', date_to: '', q: '',
-}
 
 function useCountdown(target: string | null): string | null {
   const [, force] = useState(0)
@@ -72,7 +55,7 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(null)
   const [markets, setMarkets] = useState<MarketInfo[]>([])
   const [tab, setTab] = useState<TabKey>('pending')
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
+  const [filters, setFilters] = useState<LeadFilters>(EMPTY_LEAD_FILTERS)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [leads, setLeads] = useState<Lead[]>([])
   const [leadsTotal, setLeadsTotal] = useState(0)
@@ -113,6 +96,8 @@ export default function App() {
   const [savingConfig, setSavingConfig] = useState(false)
   const [catalog, setCatalog] = useState<string[]>([])
   const [selectedCats, setSelectedCats] = useState<string[]>([])
+  /** The filter's options — the categories this tab actually holds. */
+  const [categoryFacets, setCategoryFacets] = useState<Array<{ name: string; count: number }>>([])
   const [selectedCountries, setSelectedCountries] = useState<string[]>([])
   const scopePendingRef = useRef(false)
   const cityDirtyRef = useRef(false)
@@ -140,13 +125,17 @@ export default function App() {
   const refreshLeads = useCallback(async () => {
     setLoadingLeads(true)
     try {
-      const params: Record<string, string> = { status: tab, page: String(page), page_size: '50' }
+      const params: Record<string, string | string[]> = {
+        ...leadFilterParams(filters),
+        status: tab,
+        page: String(page),
+        page_size: '50',
+      }
       // Ranking runs in Mongo over the whole result set, not this page.
       if (sort === 'score') {
         params.sort = 'score'
         params.dir = 'desc'
       }
-      for (const [k, v] of Object.entries(filters)) if (v) params[k] = v
       const res = await getLeads(params)
       setLeads(res.leads)
       setLeadsTotal(res.total)
@@ -159,6 +148,14 @@ export default function App() {
 
   // Changing tab, filters or order always restarts at page 1.
   useEffect(() => setPage(1), [tab, filters, sort])
+
+  // The category filter's options belong to the tab, not to the other filters.
+  const refreshFacets = useCallback(() => {
+    void getLeadCategories(tab)
+      .then((r) => setCategoryFacets(r.categories))
+      .catch(() => setCategoryFacets([]))
+  }, [tab])
+  useEffect(refreshFacets, [refreshFacets])
 
   useEffect(() => {
     void refreshStatus()
@@ -274,8 +271,14 @@ export default function App() {
     }
   }
 
-  const setFilter = (key: keyof Filters, value: string) => setFilters((f) => ({ ...f, [key]: value }))
-  const hasFilters = Object.values(filters).some(Boolean)
+  const setFilter = <K extends keyof LeadFilters>(key: K, value: LeadFilters[K]) =>
+    setFilters((f) => ({ ...f, [key]: value }))
+  const hasFilters = anyLeadFilter(filters)
+  const filterCategories = useMemo(() => categoryFacets.map((c) => c.name), [categoryFacets])
+  const filterCategoryCounts = useMemo(
+    () => Object.fromEntries(categoryFacets.map((c) => [c.name, c.count])),
+    [categoryFacets],
+  )
 
   const runRowAction = async (lead: Lead, action: string, fn: () => Promise<unknown>) => {
     setRowBusy(`${lead._id}:${action}`)
@@ -283,6 +286,8 @@ export default function App() {
     try {
       await fn()
       await Promise.all([refreshLeads(), refreshStatus()])
+      // The row just left (or joined) this tab — its category count moved with it.
+      refreshFacets()
     } catch (e) {
       setError(`${lead.name}: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -573,7 +578,16 @@ export default function App() {
                       </option>
                     ))}
                   </Select>
-                  <Input className="w-32" placeholder="Category…" value={filters.category} onChange={(e) => setFilter('category', e.target.value)} />
+                  <CategoryPicker
+                    catalog={filterCategories}
+                    counts={filterCategoryCounts}
+                    selected={filters.category}
+                    onChange={(next) => setFilter('category', next)}
+                    title="Filter by the categories these leads were discovered under"
+                    footer={(n) =>
+                      n ? `Showing only these ${n}.` : `${filterCategories.length} categor${filterCategories.length === 1 ? 'y' : 'ies'} in this tab.`
+                    }
+                  />
                   <span className="flex items-center gap-1">
                     <Input className="w-[70px]" type="number" min={0} max={10} step={0.5} placeholder="Score ≥" value={filters.score_min} onChange={(e) => setFilter('score_min', e.target.value)} />
                     <Input className="w-[70px]" type="number" min={0} max={10} step={0.5} placeholder="Score ≤" value={filters.score_max} onChange={(e) => setFilter('score_max', e.target.value)} />
@@ -588,7 +602,7 @@ export default function App() {
                     <Input className="w-[126px]" type="date" value={filters.date_to} onChange={(e) => setFilter('date_to', e.target.value)} />
                   </span>
                   {hasFilters && (
-                    <Button variant="ghost" className="!px-2.5 !py-1 !text-[11.5px]" onClick={() => setFilters(EMPTY_FILTERS)}>
+                    <Button variant="ghost" className="!px-2.5 !py-1 !text-[11.5px]" onClick={() => setFilters(EMPTY_LEAD_FILTERS)}>
                       Clear
                     </Button>
                   )}
@@ -640,7 +654,7 @@ export default function App() {
                             <span className="text-brand-green">{lead.outreach.count}/3 sent · </span>
                           )}
                           {lead.city_label}
-                          <span className="text-gray-3"> · {lead.category ?? lead.types[0] ?? '—'}</span>
+                          <span className="text-gray-3" title={lead.category ?? undefined}> · {leadCategoryLabel(lead)}</span>
                           {lead.contact.selected_email ? (
                             <span className="font-mono text-[10.5px] text-gray-3">
                               {' '}
@@ -682,7 +696,7 @@ export default function App() {
               <span>
                 {leadsTotal} lead{leadsTotal === 1 ? '' : 's'}
                 {hasFilters && (
-                  <button className="ml-2 text-gray-2 hover:text-ink" onClick={() => setFilters(EMPTY_FILTERS)}>
+                  <button className="ml-2 text-gray-2 hover:text-ink" onClick={() => setFilters(EMPTY_LEAD_FILTERS)}>
                     clear filters
                   </button>
                 )}

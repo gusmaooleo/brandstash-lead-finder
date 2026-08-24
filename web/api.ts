@@ -24,7 +24,7 @@ export type Lead = {
   status: LeadStatus
   delivery: LeadDelivery & { followup?: number | null }
   outreach: LeadOutreach
-  discovery: { query: string; city_label: string; discovered_at: string }
+  discovery: { query: string; city_label: string; discovered_at: string; search_category?: string | null }
   approved_at: string | null
   archived_at: string | null
   audit_trail: AuditEvent[]
@@ -328,9 +328,22 @@ export const listAnthropicModels = (apiKey?: string) =>
     body: JSON.stringify({ api_key: apiKey ?? '' }),
   })
 
-export const getLeads = (params: Record<string, string>) =>
-  request<{ source: string; leads: Lead[]; total: number; page: number; page_size: number }>(
-    `/api/leads?${new URLSearchParams(params)}`,
+export const getLeads = (params: Record<string, string | string[]>) => {
+  const qs = new URLSearchParams()
+  // A multi-select filter repeats its key — ?category=A&category=B — which is
+  // what Express parses back into an array.
+  for (const [key, value] of Object.entries(params)) {
+    for (const one of Array.isArray(value) ? value : [value]) qs.append(key, one)
+  }
+  return request<{ source: string; leads: Lead[]; total: number; page: number; page_size: number }>(
+    `/api/leads?${qs}`,
+  )
+}
+
+/** The category filter's options: what this tab actually holds, with counts. */
+export const getLeadCategories = (status: string) =>
+  request<{ categories: Array<{ name: string; count: number }> }>(
+    `/api/leads/categories?status=${encodeURIComponent(status)}`,
   )
 export const getLead = (id: string) => request<{ source: string; lead: Lead; analysis: Analysis | null }>(`/api/leads/${id}`)
 export const getEmailPreview = (id: string, opts: { lang?: string; template?: string; followup?: number } = {}) => {
