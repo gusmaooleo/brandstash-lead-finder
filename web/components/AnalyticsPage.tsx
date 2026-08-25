@@ -22,11 +22,13 @@ import {
   type BreakdownRow,
   type EmailSendRow,
   type SendLandingStatus,
+  type SendReplyStatus,
   type SendTimelineEntry,
 } from '../api'
 import { Button, Chip, Input, Select, SectionLabel } from './ui'
 import { ThemeToggle, useTheme } from './ThemeToggle'
 import { SendsChart } from './SendsChart'
+import { PerformanceLearning } from './PerformanceLearning'
 
 /* ── small formatters ─────────────────────────────────────────────────── */
 
@@ -65,11 +67,30 @@ function LandingBadge({ status }: { status: SendLandingStatus }) {
   )
 }
 
-function MetricCard({ label, value, hint, accent }: { label: string; value: string; hint?: string; accent?: boolean }) {
+const REPLY_BADGE: Record<SendReplyStatus, { label: string; cls: string }> = {
+  replied: { label: 'Human reply', cls: 'tint-good' },
+  no_reply: { label: 'No reply yet', cls: 'border-line bg-paper-2 text-gray-1' },
+  automatic: { label: 'Automatic only', cls: 'tint-warn' },
+  untracked: { label: 'Untracked', cls: 'border-line bg-paper-2 text-gray-3' },
+  failed: { label: 'Send failed', cls: 'tint-bad' },
+  queued: { label: 'Awaiting send', cls: 'tint-warn' },
+  dry_run: { label: 'Dry run', cls: 'border-line bg-paper-2 text-gray-3' },
+  bounced: { label: 'Not delivered', cls: 'tint-bad' },
+}
+
+function ReplyBadge({ status }: { status: SendReplyStatus }) {
+  const badge = REPLY_BADGE[status]
+  return <span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[10.5px] ${badge.cls}`}>{badge.label}</span>
+}
+
+function MetricCard({ label, value, hint, tone = 'default' }: { label: string; value: string; hint?: string; tone?: 'default' | 'visit' | 'reply' }) {
   return (
     <div className="rounded-2xl border border-line bg-card px-4 py-3">
       <div className="text-[10px] font-medium uppercase tracking-[0.09em] text-gray-2">{label}</div>
-      <div className={`mt-1 font-mono text-[22px] font-semibold tabular-nums leading-tight ${accent ? 'text-brand-green' : 'text-ink'}`}>
+      <div
+        className={`mt-1 font-mono text-[22px] font-semibold tabular-nums leading-tight ${tone === 'visit' ? 'text-brand-green' : tone === 'default' ? 'text-ink' : ''}`}
+        style={tone === 'reply' ? { color: 'var(--color-chart-replied)' } : undefined}
+      >
         {value}
       </div>
       {hint && <div className="mt-0.5 truncate text-[10.5px] text-gray-3">{hint}</div>}
@@ -95,6 +116,8 @@ const TIMELINE_LABEL: Record<string, string> = {
   send_failed: 'Provider failed',
   first_landing_visit: 'First consented landing visit',
   last_landing_visit: 'Most recent landing visit',
+  first_human_reply: 'First human reply',
+  latest_human_reply: 'Most recent human reply',
 }
 
 function SendDrawer({ id, onClose }: { id: string; onClose: () => void }) {
@@ -151,6 +174,14 @@ function SendDrawer({ id, onClose }: { id: string; onClose: () => void }) {
                 <div className="flex justify-between gap-3"><span className="text-gray-2">Last synced</span><span className="text-ink">{fmtDateTime(s.landing_visit.synced_at)}</span></div>
               </div>
 
+              <div className="mt-5"><SectionLabel>Replies</SectionLabel></div>
+              <div className="mt-2 space-y-1.5 text-[12.5px] text-gray-1">
+                <div className="flex justify-between gap-3"><span className="text-gray-2">Status</span><ReplyBadge status={s.reply_status} /></div>
+                <div className="flex justify-between gap-3"><span className="text-gray-2">Human replies</span><span className="font-mono tabular-nums text-ink">{s.reply_summary.event_count}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-gray-2">First reply</span><span className="text-ink">{fmtDateTime(s.reply_summary.first_observed_at)}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-gray-2">Latest reply</span><span className="text-ink">{fmtDateTime(s.reply_summary.last_observed_at)}</span></div>
+              </div>
+
               <div className="mt-5"><SectionLabel>Timeline</SectionLabel></div>
               <ol className="mt-2 space-y-0">
                 {detail!.timeline.map((t, i) => (
@@ -179,14 +210,15 @@ function SendDrawer({ id, onClose }: { id: string; onClose: () => void }) {
 /* ── page ─────────────────────────────────────────────────────────────── */
 
 
-type SendFilters = { q: string; landing: string; attempt: string; status: string }
-const EMPTY_SEND_FILTERS: SendFilters = { q: '', landing: '', attempt: '', status: '' }
+type SendFilters = { q: string; landing: string; reply: string; category: string; attempt: string; status: string }
+const EMPTY_SEND_FILTERS: SendFilters = { q: '', landing: '', reply: '', category: '', attempt: '', status: '' }
 
 const GROUPS: Array<{ key: keyof AnalyticsOverview['breakdowns']; label: string }> = [
   { key: 'template', label: 'Template' },
   { key: 'variant', label: 'Variant' },
   { key: 'campaign', label: 'Campaign' },
   { key: 'attempt', label: 'Attempt' },
+  { key: 'category', label: 'Category' },
 ]
 
 const PAGE_SIZE = 25
@@ -362,28 +394,36 @@ export function AnalyticsPage() {
           </div>
 
           {/* metric cards */}
-          <section className="brand-rise grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <MetricCard label="Emails sent" value={loading && !totals ? '…' : String(totals?.emails_sent ?? 0)}
+          <section className="brand-rise grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <MetricCard label="Real sends" value={loading && !totals ? '…' : String(totals?.emails_sent ?? 0)}
               hint={totals ? `${totals.dry_run_sends} dry runs · ${totals.bounced_sends + totals.complained_sends} rejected` : undefined} />
-            <MetricCard label="Sends with visit" value={loading && !totals ? '…' : String(totals?.visited_sends ?? 0)}
-              hint="each send counts once" accent />
-            <MetricCard label="Landing visit rate" value={loading && !totals ? '…' : fmtPct(totals?.landing_visit_rate ?? 0)} accent />
-            <MetricCard label="Unique visited leads" value={loading && !totals ? '…' : String(totals?.unique_visited_leads ?? 0)} />
+            <MetricCard label="Human replies" value={loading && !totals ? '…' : String(totals?.replied_sends ?? 0)}
+              hint={totals ? `${totals.human_replies} messages` : undefined} tone="reply" />
+            <MetricCard label="Reply rate" value={loading && !totals ? '…' : fmtPct(totals?.reply_rate ?? 0)} tone="reply" />
+            <MetricCard label="Median → reply" value={loading && !totals ? '…' : fmtHours(totals?.median_hours_to_first_reply ?? null)} />
+            <MetricCard label="Landing visits" value={loading && !totals ? '…' : String(totals?.visited_sends ?? 0)}
+              hint="each send counts once" tone="visit" />
+            <MetricCard label="Visit rate" value={loading && !totals ? '…' : fmtPct(totals?.landing_visit_rate ?? 0)} tone="visit" />
             <MetricCard label="Consented sessions" value={loading && !totals ? '…' : String(totals?.consented_sessions ?? 0)}
               hint="cookie-accepted only" />
             <MetricCard label="Median send → visit" value={loading && !totals ? '…' : fmtHours(totals?.median_hours_to_first_visit ?? null)} />
           </section>
 
+          {overview && <PerformanceLearning learning={overview.learning} />}
+
           {/* chart */}
           <section className="brand-rise rounded-3xl border border-line bg-card p-4">
             <div className="mb-2 flex flex-wrap items-center gap-3">
-              <SectionLabel>Daily sends & landing visits</SectionLabel>
+              <SectionLabel>Daily outcome signals</SectionLabel>
               <span className="ml-auto flex items-center gap-3 text-[11px] text-gray-1">
                 <span className="flex items-center gap-1.5">
                   <span className="size-2 rounded-full" style={{ background: 'var(--color-chart-sent)' }} /> sent
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="size-2 rounded-full" style={{ background: 'var(--color-chart-visited)' }} /> visited landing
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2 rounded-full" style={{ background: 'var(--color-chart-replied)' }} /> human reply
                 </span>
               </span>
             </div>
@@ -417,15 +457,16 @@ export function AnalyticsPage() {
               <div className="py-6 text-center text-[12.5px] text-gray-3">Nothing sent in this period.</div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-left text-[12.5px]">
+                <table className="w-full min-w-[860px] text-left text-[12.5px]">
                   <thead>
                     <tr className="border-b border-line text-[11px] uppercase tracking-[0.06em] text-gray-2">
                       <th className="px-3 py-2 font-medium">{GROUPS.find((g) => g.key === groupBy)?.label}</th>
                       <th className="px-3 py-2 text-right font-medium">Sent</th>
+                      <th className="px-3 py-2 text-right font-medium">Replied</th>
+                      <th className="px-3 py-2 font-medium">Reply signal</th>
                       <th className="px-3 py-2 text-right font-medium">Visited</th>
-                      <th className="px-3 py-2 font-medium">Visit rate</th>
-                      <th className="px-3 py-2 text-right font-medium">Sessions</th>
-                      <th className="px-3 py-2 text-right font-medium">Median → visit</th>
+                      <th className="px-3 py-2 font-medium">Visit signal</th>
+                      <th className="px-3 py-2 text-right font-medium">Median → reply</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -433,27 +474,33 @@ export function AnalyticsPage() {
                       <tr key={b.key} className="border-b border-line/60 last:border-b-0">
                         <td className="px-3 py-2 font-mono text-[11.5px] text-ink">{b.key}</td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-1">{b.sent}</td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-1">{b.visited}</td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-1">{b.replied}</td>
                         <td className="px-3 py-2">
                           <span className="flex items-center gap-2">
-                            <span className="h-1.5 w-24 overflow-hidden rounded-full bg-paper-3">
+                            <span className="h-1.5 w-20 overflow-hidden rounded-full bg-paper-3">
                               <span
                                 className="block h-full rounded-full"
-                                style={{ width: `${Math.min(100, b.rate)}%`, background: 'var(--color-chart-visited)' }}
+                                style={{ width: `${Math.min(100, b.reply_rate)}%`, background: 'var(--color-chart-replied)' }}
                               />
                             </span>
                             <span className={`font-mono text-[11.5px] tabular-nums ${b.sent < LOW_SAMPLE ? 'text-gray-3' : 'text-ink'}`}>
-                              {fmtPct(b.rate)}
+                              {fmtPct(b.reply_rate)}
                             </span>
-                            {b.sent < LOW_SAMPLE && (
-                              <span className="text-[10px] text-gray-3" title={`Fewer than ${LOW_SAMPLE} sends — read with care`}>
-                                low sample
-                              </span>
-                            )}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-1">{b.sessions}</td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-1">{fmtHours(b.median_hours_to_first_visit)}</td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-1">{b.visited}</td>
+                        <td className="px-3 py-2">
+                          <span className="flex items-center gap-2">
+                            <span className="h-1.5 w-20 overflow-hidden rounded-full bg-paper-3">
+                              <span className="block h-full rounded-full" style={{ width: `${Math.min(100, b.rate)}%`, background: 'var(--color-chart-visited)' }} />
+                            </span>
+                            <span className={`font-mono text-[11.5px] tabular-nums ${b.sent < LOW_SAMPLE ? 'text-gray-3' : 'text-ink'}`}>{fmtPct(b.rate)}</span>
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-1">
+                          {fmtHours(b.median_hours_to_first_reply)}
+                          {b.sent < LOW_SAMPLE && <span className="ml-2 text-[9.5px] text-gray-3">low sample</span>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -468,11 +515,22 @@ export function AnalyticsPage() {
               <SectionLabel>All sends</SectionLabel>
               <span className="mx-1.5 h-4 w-px bg-line" />
               <Input className="w-52" placeholder="Search lead or recipient…" value={filters.q} onChange={(e) => setFilter('q', e.target.value)} />
+              <Select value={filters.reply} onChange={(e) => setFilter('reply', e.target.value)}>
+                <option value="">Replies: all</option>
+                <option value="replied">Human reply</option>
+                <option value="no_reply">No reply yet</option>
+                <option value="automatic">Automatic only</option>
+                <option value="untracked">Untracked</option>
+              </Select>
               <Select value={filters.landing} onChange={(e) => setFilter('landing', e.target.value)}>
                 <option value="">Landing: all</option>
                 <option value="visited">Visited landing</option>
                 <option value="no_visit">Sent, no visit</option>
                 <option value="untracked">Untracked</option>
+              </Select>
+              <Select value={filters.category} onChange={(e) => setFilter('category', e.target.value)}>
+                <option value="">Category: all</option>
+                {(overview?.learning.categories ?? []).map((category) => <option key={category.key} value={category.key}>{category.key}</option>)}
               </Select>
               <Select value={filters.attempt} onChange={(e) => setFilter('attempt', e.target.value)}>
                 <option value="">Attempt: all</option>
@@ -504,18 +562,17 @@ export function AnalyticsPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] text-left text-[12.5px]">
+                <table className="w-full min-w-[1120px] text-left text-[12.5px]">
                   <thead>
                     <tr className="border-b border-line text-[11px] uppercase tracking-[0.06em] text-gray-2">
                       <th className="px-4 py-2.5 font-medium">Lead</th>
-                      <th className="px-3 py-2.5 font-medium">Recipient</th>
-                      <th className="px-3 py-2.5 font-medium">Template</th>
-                      <th className="px-3 py-2.5 font-medium">Campaign</th>
+                      <th className="px-3 py-2.5 font-medium">Category</th>
+                      <th className="px-3 py-2.5 font-medium">Email</th>
                       <th className="px-3 py-2.5 text-center font-medium">Att.</th>
                       <th className="px-3 py-2.5 font-medium">Sent at</th>
+                      <th className="px-3 py-2.5 font-medium">Reply</th>
+                      <th className="px-3 py-2.5 font-medium">First reply</th>
                       <th className="px-3 py-2.5 font-medium">Landing</th>
-                      <th className="px-3 py-2.5 font-medium">First visit</th>
-                      <th className="px-3 py-2.5 text-right font-medium">Sessions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -526,14 +583,16 @@ export function AnalyticsPage() {
                         className="cursor-pointer border-b border-line/60 transition-colors last:border-b-0 hover:bg-paper-2"
                       >
                         <td className="max-w-[220px] truncate px-4 py-2.5 font-medium text-ink">{s.lead_name}</td>
-                        <td className="max-w-[200px] truncate px-3 py-2.5 font-mono text-[11px] text-gray-2">{s.recipient}</td>
-                        <td className="px-3 py-2.5 font-mono text-[11px] text-gray-2">{s.template_id ?? '—'}</td>
-                        <td className="max-w-[160px] truncate px-3 py-2.5 font-mono text-[11px] text-gray-2">{s.campaign ?? '—'}</td>
+                        <td className="max-w-[170px] truncate px-3 py-2.5 text-[11px] text-gray-2">{s.search_category ?? '—'}</td>
+                        <td className="max-w-[260px] px-3 py-2.5">
+                          <div className="truncate text-[11.5px] text-ink">{s.template_name ?? s.template_id ?? '—'} · v{(s.variant ?? 0) + 1}</div>
+                          <div className="truncate text-[10px] text-gray-3">{s.variant_subject ?? s.recipient}</div>
+                        </td>
                         <td className="px-3 py-2.5 text-center font-mono tabular-nums text-gray-1">{s.attempt}/3</td>
                         <td className="whitespace-nowrap px-3 py-2.5 text-gray-1">{fmtDateTime(s.sent_at)}</td>
+                        <td className="px-3 py-2.5"><ReplyBadge status={s.reply_status} /></td>
+                        <td className="whitespace-nowrap px-3 py-2.5 text-gray-1">{fmtDateTime(s.reply_summary.first_observed_at)}</td>
                         <td className="px-3 py-2.5"><LandingBadge status={s.landing_status} /></td>
-                        <td className="whitespace-nowrap px-3 py-2.5 text-gray-1">{fmtDateTime(s.landing_visit.first_observed_at)}</td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-gray-1">{s.landing_visit.event_count}</td>
                       </tr>
                     ))}
                   </tbody>

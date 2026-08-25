@@ -11,7 +11,7 @@
 
 import { useMemo, useRef, useState } from 'react'
 
-export type ChartPoint = { day: string; sent: number; visited: number; rate: number }
+export type ChartPoint = { day: string; sent: number; visited: number; replied: number; rate: number; reply_rate: number }
 
 const PAD_L = 34
 const PAD_R = 10
@@ -50,7 +50,7 @@ export function SendsChart({ data }: { data: ChartPoint[] }) {
 
   const plotW = width - PAD_L - PAD_R
   const maxSent = niceMax(Math.max(1, ...data.map((d) => d.sent)))
-  const maxRate = Math.max(20, Math.min(100, niceMax(Math.max(...data.map((d) => d.rate), 0))))
+  const maxRate = Math.max(20, Math.min(100, niceMax(Math.max(...data.flatMap((d) => [d.rate, d.reply_rate]), 0))))
   const slot = data.length ? plotW / data.length : plotW
   const barW = Math.max(3, Math.min(26, slot - 2))
 
@@ -61,6 +61,11 @@ export function SendsChart({ data }: { data: ChartPoint[] }) {
 
   const ratePath = useMemo(() => {
     const pts = data.map((d, i) => `${x(i).toFixed(1)},${yRate(d.rate).toFixed(1)}`)
+    return pts.length ? `M${pts.join('L')}` : ''
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, width, maxRate])
+  const replyRatePath = useMemo(() => {
+    const pts = data.map((d, i) => `${x(i).toFixed(1)},${yRate(d.reply_rate).toFixed(1)}`)
     return pts.length ? `M${pts.join('L')}` : ''
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, width, maxRate])
@@ -83,7 +88,7 @@ export function SendsChart({ data }: { data: ChartPoint[] }) {
     <div ref={setContainer} className="relative w-full">
       <svg
         role="img"
-        aria-label="Emails sent, sends with a landing visit, and visit rate per day"
+        aria-label="Emails sent, landing visits, human replies, visit rate and reply rate per day"
         viewBox={`0 0 ${width} ${HEIGHT}`}
         className="block w-full"
         style={{ height: HEIGHT }}
@@ -127,7 +132,9 @@ export function SendsChart({ data }: { data: ChartPoint[] }) {
           const bx = x(i) - barW / 2
           const sentY = ySent(d.sent)
           const visY = ySent(d.visited)
+          const replyY = ySent(d.replied)
           const r = Math.min(4, barW / 2)
+          const signalW = Math.max(1, (barW - 5) / 2)
           return (
             <g key={d.day} opacity={hover == null || hover === i ? 1 : 0.55}>
               {d.sent > 0 && (
@@ -135,10 +142,16 @@ export function SendsChart({ data }: { data: ChartPoint[] }) {
               )}
               {d.visited > 0 && (
                 <rect
-                  x={bx + 2} y={visY} width={Math.max(1, barW - 4)} height={PAD_T + BARS_H - visY}
+                  x={bx + 2} y={visY} width={signalW} height={PAD_T + BARS_H - visY}
                   rx={Math.max(1, r - 1)}
                   fill="var(--color-chart-visited)"
-                  stroke="var(--color-card)" strokeWidth={2}
+                />
+              )}
+              {d.replied > 0 && (
+                <rect
+                  x={bx + 3 + signalW} y={replyY} width={signalW} height={PAD_T + BARS_H - replyY}
+                  rx={Math.max(1, r - 1)}
+                  fill="var(--color-chart-replied)"
                 />
               )}
             </g>
@@ -147,8 +160,12 @@ export function SendsChart({ data }: { data: ChartPoint[] }) {
 
         {/* rate line (single series — % scale of its own panel) */}
         {ratePath && <path d={ratePath} fill="none" stroke="var(--color-chart-visited)" strokeWidth={2} strokeLinejoin="round" />}
+        {replyRatePath && <path d={replyRatePath} fill="none" stroke="var(--color-chart-replied)" strokeWidth={2} strokeLinejoin="round" />}
         {h && hover != null && (
           <circle cx={x(hover)} cy={yRate(h.rate)} r={4} fill="var(--color-chart-visited)" stroke="var(--color-card)" strokeWidth={2} />
+        )}
+        {h && hover != null && (
+          <circle cx={x(hover)} cy={yRate(h.reply_rate)} r={4} fill="var(--color-chart-replied)" stroke="var(--color-card)" strokeWidth={2} />
         )}
 
         {/* x labels (shared axis) */}
@@ -161,7 +178,7 @@ export function SendsChart({ data }: { data: ChartPoint[] }) {
         )}
         {/* panel captions */}
         <text x={PAD_L} y={rateTop - 8} fontSize={9.5} fill="var(--color-gray-2)" style={{ textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          visit rate
+          visit &amp; reply rate
         </text>
       </svg>
 
@@ -185,7 +202,14 @@ export function SendsChart({ data }: { data: ChartPoint[] }) {
             <span className="ml-auto pl-3 font-mono tabular-nums text-ink">{h.visited}</span>
           </div>
           <div className="flex items-center gap-1.5 text-gray-1">
-            rate<span className="ml-auto pl-3 font-mono tabular-nums text-ink">{h.rate.toFixed(0)}%</span>
+            <span className="size-2 rounded-full" style={{ background: 'var(--color-chart-replied)' }} /> replied
+            <span className="ml-auto pl-3 font-mono tabular-nums text-ink">{h.replied}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-gray-1">
+            visit rate<span className="ml-auto pl-3 font-mono tabular-nums text-ink">{h.rate.toFixed(0)}%</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-gray-1">
+            reply rate<span className="ml-auto pl-3 font-mono tabular-nums text-ink">{h.reply_rate.toFixed(0)}%</span>
           </div>
         </div>
       )}

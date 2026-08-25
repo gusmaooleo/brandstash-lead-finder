@@ -46,6 +46,7 @@
      dark #3b82f6/#059669 on #101012, light #2563eb/#059669 on #ffffff) */
   --color-chart-sent: #3b82f6;
   --color-chart-visited: #059669;
+  --color-chart-replied: #f59e0b;
 
   /* shadcn-style tokens consumed by the mapcn ui components (map.tsx) */
   --color-background: #0a0a0b;
@@ -81,6 +82,7 @@ html.light {
   --color-stage: #e3e8ea;
   --color-chart-sent: #2563eb;
   --color-chart-visited: #059669;
+  --color-chart-replied: #d97706;
   --color-background: #fbfbfa;
   --color-foreground: #0b0b0c;
   --color-muted: #f1f0ec;
