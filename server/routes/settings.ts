@@ -13,13 +13,14 @@ import { resetMailProvider } from '../email/provider'
 import { resetLandingConnection } from '../tracking/landing-db'
 import { AnthropicError, listModels } from '../settings/anthropic'
 import { hasEncryptionKey } from '../settings/crypto'
-import { emailModeReady, settings, settingsView, updateSettings, type SettingsPatch } from '../settings/settings'
+import { emailModeReady, replyTrackingReady, settings, settingsView, updateSettings, type SettingsPatch } from '../settings/settings'
 
 export const settingsRouter = Router()
 
 settingsRouter.get('/', (_req, res) => {
   const { ready, reason } = emailModeReady()
-  res.json({ ...settingsView(), email_ready: ready, email_not_ready_reason: reason })
+  const replies = replyTrackingReady()
+  res.json({ ...settingsView(), email_ready: ready, email_not_ready_reason: reason, reply_tracking_ready: replies.ready })
 })
 
 settingsRouter.put('/', async (req, res) => {
@@ -35,7 +36,8 @@ settingsRouter.put('/', async (req, res) => {
     resetMailProvider()
     resetLandingConnection()
     const { ready, reason } = emailModeReady()
-    res.json({ ...settingsView(), email_ready: ready, email_not_ready_reason: reason })
+    const replies = replyTrackingReady()
+    res.json({ ...settingsView(), email_ready: ready, email_not_ready_reason: reason, reply_tracking_ready: replies.ready })
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) })
   }

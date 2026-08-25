@@ -75,6 +75,12 @@ const appSettingsSchema = new Schema(
       mongodb_uri_enc: { type: String, default: null },
       db_name: { type: String, default: 'brandstash_leads' },
     },
+    replies: {
+      enabled: { type: Boolean, default: false },
+      receiving_domain: { type: String, default: '' },
+      local_part: { type: String, default: 'reply' },
+      resend_key_enc: { type: String, default: null },
+    },
   },
   { collection: 'app_settings', timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' }, minimize: false },
 )

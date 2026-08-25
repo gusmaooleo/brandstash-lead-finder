@@ -52,6 +52,7 @@ export type RuntimeSettings = {
   /** Follow-ups after the initial email: 1–5. */
   followupSteps: number
   landing: { mongodbUri: string; dbName: string }
+  replies: { enabled: boolean; receivingDomain: string; localPart: string; resendKey: string }
 }
 
 /** `Name <email>` — the one place the two fields are concatenated. */
@@ -114,6 +115,12 @@ function toSnapshot(doc: AppSettingsDoc): RuntimeSettings {
       mongodbUri: tryDecrypt(doc.landing?.mongodb_uri_enc) ?? '',
       dbName: doc.landing?.db_name ?? 'brandstash_leads',
     },
+    replies: {
+      enabled: Boolean(doc.replies?.enabled),
+      receivingDomain: doc.replies?.receiving_domain ?? '',
+      localPart: doc.replies?.local_part ?? 'reply',
+      resendKey: tryDecrypt(doc.replies?.resend_key_enc) ?? (tryDecrypt(e?.resend_key_enc) ?? ''),
+    },
   }
 }
 
@@ -163,6 +170,7 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   followupAfterDays: 3,
   followupSteps: 2,
   landing: { mongodbUri: '', dbName: 'brandstash_leads' },
+  replies: { enabled: false, receivingDomain: '', localPart: 'reply', resendKey: '' },
 }
 
 /**
@@ -177,6 +185,7 @@ export function setSettingsForTests(patch: DeepPartial<RuntimeSettings>): Runtim
     email: { ...base.email, ...patch.email, from: { ...base.email.from, ...patch.email?.from }, replyTo: { ...base.email.replyTo, ...patch.email?.replyTo } },
     ai: { ...base.ai, ...patch.ai },
     landing: { ...base.landing, ...patch.landing },
+    replies: { ...base.replies, ...patch.replies },
   } as RuntimeSettings
   return snapshot
 }
@@ -215,12 +224,21 @@ export type SettingsView = {
   places: { api_key_masked: string | null }
   discovery: { leads_per_hour: number; lead_retention_days: number; followup_after_days: number; followup_steps: number }
   landing: { mongodb_uri_masked: string | null; db_name: string }
+  replies: {
+    enabled: boolean
+    receiving_domain: string
+    local_part: string
+    resend_key_masked: string | null
+    ready: boolean
+    not_ready_reason: string | null
+  }
   /** False = secrets cannot be stored; the UI must say so instead of failing. */
   encryption_ready: boolean
 }
 
 export function settingsView(): SettingsView {
   const s = settings()
+  const replyState = replyTrackingReady(s)
   return {
     email: {
       mode: s.email.mode,
@@ -255,6 +273,14 @@ export function settingsView(): SettingsView {
       followup_steps: s.followupSteps,
     },
     landing: { mongodb_uri_masked: maskSecret(s.landing.mongodbUri || null), db_name: s.landing.dbName },
+    replies: {
+      enabled: s.replies.enabled,
+      receiving_domain: s.replies.receivingDomain,
+      local_part: s.replies.localPart,
+      resend_key_masked: maskSecret(s.replies.resendKey || null),
+      ready: replyState.ready,
+      not_ready_reason: replyState.reason,
+    },
     encryption_ready: hasEncryptionKey(),
   }
 }
@@ -289,6 +315,7 @@ export type SettingsPatch = {
   places?: Partial<{ api_key: SecretInput }>
   discovery?: Partial<{ leads_per_hour: number; lead_retention_days: number; followup_after_days: number; followup_steps: number }>
   landing?: Partial<{ mongodb_uri: SecretInput; db_name: string }>
+  replies?: Partial<{ enabled: boolean; receiving_domain: string; local_part: string; resend_key: SecretInput }>
 }
 
 /** Builds the `$set` for one secret: untouched / cleared / re-encrypted. */
@@ -365,6 +392,26 @@ export async function updateSettings(patch: SettingsPatch): Promise<RuntimeSetti
     secretUpdate('landing.mongodb_uri_enc', patch.landing.mongodb_uri, $set)
   }
 
+  if (patch.replies) {
+    const r = patch.replies
+    if (r.enabled !== undefined) $set['replies.enabled'] = Boolean(r.enabled)
+    if (r.receiving_domain !== undefined) {
+      const domain = String(r.receiving_domain).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')
+      if (domain && !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) {
+        throw new Error('Receiving domain must be a valid domain name')
+      }
+      $set['replies.receiving_domain'] = domain
+    }
+    if (r.local_part !== undefined) {
+      const localPart = String(r.local_part).trim().toLowerCase()
+      if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(localPart)) {
+        throw new Error('Reply address prefix must use letters, numbers, dots, underscores or hyphens')
+      }
+      $set['replies.local_part'] = localPart
+    }
+    secretUpdate('replies.resend_key_enc', r.resend_key, $set)
+  }
+
   if (Object.keys($set).length) {
     await AppSettings.updateOne({ _id: 'settings' }, { $set }, { upsert: true })
   }
@@ -378,6 +425,13 @@ export function emailModeReady(s: RuntimeSettings = settings()): { ready: boolea
   if (s.email.mode === 'smtp' && !(s.email.smtpHost && s.email.smtpUser && s.email.smtpPass)) {
     return { ready: false, reason: 'SMTP host, user or password is missing' }
   }
+  return { ready: true, reason: null }
+}
+
+export function replyTrackingReady(s: RuntimeSettings = settings()): { ready: boolean; reason: string | null } {
+  if (!s.replies.enabled) return { ready: false, reason: 'Reply tracking is off' }
+  if (!s.replies.receivingDomain) return { ready: false, reason: 'Receiving domain is not set' }
+  if (!s.replies.resendKey) return { ready: false, reason: 'Resend API key is not set' }
   return { ready: true, reason: null }
 }
 

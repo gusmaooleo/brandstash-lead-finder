@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { decryptSecret, encryptSecret, hasEncryptionKey, isEncrypted, maskSecret, tryDecrypt } from './crypto'
-import { addressLabel, secretUpdate, setSettingsForTests, settingsView } from './settings'
+import { addressLabel, replyTrackingReady, secretUpdate, setSettingsForTests, settingsView } from './settings'
 
 // A throwaway key: the module reads the environment on every call, so tests
 // never touch the real one.
@@ -91,6 +91,7 @@ describe('settings writes', () => {
       ai: { anthropicKey: 'sk-ant-secret-key', model: 'claude-opus-5' },
       googlePlacesApiKey: 'AIzaPlacesKey',
       landing: { mongodbUri: 'mongodb+srv://user:pass@cluster/db', dbName: 'landing' },
+      replies: { enabled: true, receivingDomain: 'reply.acme.example', localPart: 'reply', resendKey: 're_inbound_secret' },
     })
     const view = JSON.stringify(settingsView())
     for (const secret of [
@@ -99,6 +100,7 @@ describe('settings writes', () => {
       'sk-ant-secret-key',
       'AIzaPlacesKey',
       'mongodb+srv://user:pass@cluster/db',
+      're_inbound_secret',
     ]) {
       expect(view, secret).not.toContain(secret)
     }
@@ -106,6 +108,14 @@ describe('settings writes', () => {
     expect(settingsView().ai.anthropic_key_masked).toMatch(/key$/)
     expect(settingsView().ai.model).toBe('claude-opus-5')
     expect(settingsView().email.from_label).toBe('Leonardo <hello@acme.example>')
+  })
+
+  it('reports reply tracking readiness without exposing its key', () => {
+    setSettingsForTests({ replies: { enabled: true, receivingDomain: 'reply.acme.example', resendKey: 're_inbound' } })
+    expect(replyTrackingReady()).toEqual({ ready: true, reason: null })
+    expect(settingsView().replies.resend_key_masked).toMatch(/ound$/)
+    setSettingsForTests({ replies: { enabled: true, receivingDomain: '', resendKey: '' } })
+    expect(replyTrackingReady().ready).toBe(false)
   })
 
   it('ships NO offer: brand, pitch, site and logo belong to the operator', () => {

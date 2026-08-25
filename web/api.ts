@@ -158,9 +158,18 @@ export type AppSettings = {
   places: { api_key_masked: string | null }
   discovery: { leads_per_hour: number; lead_retention_days: number; followup_after_days: number }
   landing: { mongodb_uri_masked: string | null; db_name: string }
+  replies: {
+    enabled: boolean
+    receiving_domain: string
+    local_part: string
+    resend_key_masked: string | null
+    ready: boolean
+    not_ready_reason: string | null
+  }
   encryption_ready: boolean
   email_ready: boolean
   email_not_ready_reason: string | null
+  reply_tracking_ready: boolean
 }
 
 /** A secret field: omit to keep what is stored, '' to clear it. */
@@ -190,6 +199,7 @@ export type AppSettingsPatch = {
   places?: Partial<{ api_key: string }>
   discovery?: Partial<{ leads_per_hour: number; lead_retention_days: number; followup_after_days: number }>
   landing?: Partial<{ mongodb_uri: string; db_name: string }>
+  replies?: Partial<{ enabled: boolean; receiving_domain: string; local_part: string; resend_key: string }>
 }
 
 export type AnthropicModel = { id: string; display_name: string; created_at: string | null }

@@ -569,6 +569,56 @@ export function SettingsPage() {
           </Field>
         </Card>
 
+        <Card title="Reply tracking" subtitle="capture human responses">
+          <label className="flex items-start gap-2 rounded-xl border border-line bg-paper-2 px-3.5 py-3 text-[12px] text-gray-1">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={Boolean(val('replies', 'enabled'))}
+              onChange={(e) => set('replies', 'enabled', e.target.checked)}
+            />
+            <span>
+              Track replies to every outreach email
+              <span className="mt-0.5 block text-[11px] text-gray-3">
+                Each email gets a private reply address. The app matches responses to the exact template and variant.
+              </span>
+            </span>
+            <Chip className={`ml-auto shrink-0 ${stored.replies.ready ? 'tint-good' : 'tint-warn'}`}>
+              {stored.replies.ready ? 'ready' : 'setup needed'}
+            </Chip>
+          </label>
+          <div className="grid items-start gap-3.5 sm:grid-cols-2">
+            <Field label="Receiving domain" hint="A custom domain with inbound MX records configured in Resend.">
+              <Input
+                className="font-mono !text-[12px]"
+                value={String(val('replies', 'receiving_domain') ?? '')}
+                placeholder="reply.your-company.com"
+                onChange={(e) => set('replies', 'receiving_domain', e.target.value)}
+              />
+            </Field>
+            <Field label="Reply address prefix" hint="Recipients see prefix-<private id>@your receiving domain.">
+              <Input
+                className="font-mono !text-[12px]"
+                value={String(val('replies', 'local_part') ?? 'reply')}
+                onChange={(e) => set('replies', 'local_part', e.target.value)}
+              />
+            </Field>
+          </div>
+          <SecretField
+            label="Resend Receiving API key"
+            hint="Leave untouched to reuse the outbound Resend key when one is configured."
+            masked={stored.replies.resend_key_masked}
+            value={secret('replies', 'resend_key')}
+            onChange={(v) => setSecret('replies', 'resend_key', v)}
+            placeholder="re_…"
+          />
+          {!stored.replies.ready && stored.replies.enabled && (
+            <div className="tint-warn rounded-xl border px-3.5 py-2.5 text-[11.5px]">
+              {stored.replies.not_ready_reason}
+            </div>
+          )}
+        </Card>
+
         {/* ── technical: how the mail actually leaves ── */}
         <div className="mt-2 flex items-center gap-3">
           <span className="text-[10.5px] font-medium uppercase tracking-[0.09em] text-gray-3">
