@@ -504,6 +504,12 @@ export type AnalyticsOverview = {
   }
   timeseries: Array<{ day: string; sent: number; visited: number; replied: number; rate: number; reply_rate: number }>
   breakdowns: Record<'template' | 'variant' | 'campaign' | 'attempt' | 'category', BreakdownRow[]>
+  learning: {
+    attribution_window_days: number
+    minimum_sample: number
+    variants: VariantLearningRow[]
+    categories: CategoryLearningRow[]
+  }
   sync: {
     last_synced_at: string | null
     last_sync_ok: boolean | null
@@ -514,6 +520,34 @@ export type AnalyticsOverview = {
     last_sync_unattributed: number
   }
 }
+
+export type LearningMetrics = {
+  sent: number
+  visited: number
+  visit_rate: number
+  visit_confidence: number
+  replied: number
+  reply_rate: number
+  reply_confidence: number
+  score: number | null
+  eligible: boolean
+}
+
+export type VariantLearningRow = LearningMetrics & {
+  key: string
+  cohort_key: string
+  template_key: string
+  template_name: string
+  language: string
+  followup: number
+  variant: number
+  fingerprint: string
+  subject: string
+  band: string | null
+  winner: boolean
+}
+
+export type CategoryLearningRow = LearningMetrics & { key: string; winner: boolean }
 
 export type SyncResult = {
   ok: boolean

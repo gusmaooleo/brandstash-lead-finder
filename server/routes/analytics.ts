@@ -30,6 +30,7 @@ import {
   type SendRow,
 } from '../tracking/metrics'
 import { syncInboundReplies } from '../replies/resend'
+import { ATTRIBUTION_WINDOW_DAYS, MIN_PERFORMANCE_SAMPLE, rankCategories, rankVariants } from '../tracking/learning'
 
 export const analytics = Router()
 
@@ -200,8 +201,10 @@ function serializeSend(row: LeanSend): Record<string, unknown> {
 
 analytics.get('/overview', async (req, res) => {
   const { from, to } = parseRange(req.query as Record<string, unknown>)
-  const rows = (await EmailSend.find(rangeQuery(from, to), {
-    place_id: 1, status: 1, sent_at: 1, created_at: 1, template_id: 1,
+  const overviewQuery = rangeQuery(from, to)
+  if (req.query.category) Object.assign(overviewQuery, { search_category: String(req.query.category).slice(0, 120) })
+  const rows = (await EmailSend.find(overviewQuery, {
+    place_id: 1, status: 1, sent_at: 1, created_at: 1, language: 1, template_id: 1,
     variant: 1, followup: 1, attempt: 1, campaign: 1, provider_event: 1, search_category: 1,
     template_key: 1, template_name: 1, variant_fingerprint: 1, variant_subject: 1, variant_band: 1,
     tracking_id_hash: 1, reply_id_hash: 1, landing_visit: 1, reply_summary: 1,
@@ -229,6 +232,12 @@ analytics.get('/overview', async (req, res) => {
       campaign: breakdown(rows, (r) => r.campaign),
       attempt: breakdown(rows, (r) => `attempt_${r.attempt ?? 1}`),
       category: breakdown(rows, (r) => r.search_category),
+    },
+    learning: {
+      attribution_window_days: ATTRIBUTION_WINDOW_DAYS,
+      minimum_sample: MIN_PERFORMANCE_SAMPLE,
+      variants: rankVariants(rows),
+      categories: rankCategories(rows),
     },
     sync: {
       last_synced_at: state.last_synced_at,
