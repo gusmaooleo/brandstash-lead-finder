@@ -25,6 +25,7 @@ import {
   relabelTemplateKeys,
   landingStatusOf,
   overviewMetrics,
+  replyStatusOf,
   timeseries,
   type SendRow,
 } from '../tracking/metrics'
@@ -81,6 +82,7 @@ function buildSendsQuery(q: Record<string, unknown>): Record<string, unknown> {
   }
   if (q.template) query.template_id = { $regex: `^${escapeRegex(String(q.template).slice(0, 60))}` }
   if (q.campaign) query.campaign = String(q.campaign).slice(0, 80)
+  if (q.category) query.search_category = String(q.category).slice(0, 120)
   if (q.variant !== undefined && q.variant !== '' && Number.isInteger(Number(q.variant))) {
     query.variant = Number(q.variant)
   }
@@ -104,6 +106,20 @@ function buildSendsQuery(q: Record<string, unknown>): Record<string, unknown> {
       filters.push({ tracking_id_hash: null })
       break
   }
+  switch (q.reply) {
+    case 'replied':
+      filters.push({ ...PERFORMANCE_SEND, 'reply_summary.matched': true })
+      break
+    case 'no_reply':
+      filters.push({ ...PERFORMANCE_SEND, reply_id_hash: { $type: 'string' }, 'reply_summary.matched': { $ne: true } })
+      break
+    case 'automatic':
+      filters.push({ 'reply_summary.automatic_count': { $gte: 1 }, 'reply_summary.matched': { $ne: true } })
+      break
+    case 'untracked':
+      filters.push({ reply_id_hash: null })
+      break
+  }
   if (filters.length) query.$and = filters
   return query
 }
@@ -115,6 +131,8 @@ const SORTS: Record<string, Record<string, 1 | -1>> = {
   first_visit: { 'landing_visit.first_observed_at': -1 },
   sessions: { 'landing_visit.event_count': -1 },
   attempt: { attempt: -1, sent_at: -1 },
+  first_reply: { 'reply_summary.first_observed_at': -1 },
+  replies: { 'reply_summary.event_count': -1 },
 }
 
 type LeanSend = SendRow & {
@@ -138,8 +156,14 @@ function serializeSend(row: LeanSend): Record<string, unknown> {
     recipient: row.recipient,
     language: row.language ?? null,
     campaign: row.campaign ?? null,
+    search_category: row.search_category ?? null,
     template_id: row.template_id ?? null,
+    template_key: row.template_key ?? null,
+    template_name: row.template_name ?? null,
     variant: row.variant ?? null,
+    variant_fingerprint: row.variant_fingerprint?.slice(0, 12) ?? null,
+    variant_subject: row.variant_subject ?? null,
+    variant_band: row.variant_band ?? null,
     followup: row.followup ?? 0,
     attempt: row.attempt ?? 1,
     status: row.status,
@@ -152,12 +176,22 @@ function serializeSend(row: LeanSend): Record<string, unknown> {
     tracking_hash_masked:
       typeof row.tracking_id_hash === 'string' ? maskTrackingHash(row.tracking_id_hash) : null,
     landing_status: landingStatusOf(row),
+    reply_status: replyStatusOf(row),
     landing_visit: {
       matched: row.landing_visit?.matched ?? false,
       event_count: row.landing_visit?.event_count ?? 0,
       first_observed_at: row.landing_visit?.first_observed_at ?? null,
       last_observed_at: row.landing_visit?.last_observed_at ?? null,
       synced_at: row.landing_visit?.synced_at ?? null,
+    },
+    reply_summary: {
+      matched: row.reply_summary?.matched ?? false,
+      event_count: row.reply_summary?.event_count ?? 0,
+      automatic_count: row.reply_summary?.automatic_count ?? 0,
+      first_observed_at: row.reply_summary?.first_observed_at ?? null,
+      last_observed_at: row.reply_summary?.last_observed_at ?? null,
+      unread_count: row.reply_summary?.unread_count ?? 0,
+      synced_at: row.reply_summary?.synced_at ?? null,
     },
   }
 }
@@ -168,7 +202,9 @@ analytics.get('/overview', async (req, res) => {
   const { from, to } = parseRange(req.query as Record<string, unknown>)
   const rows = (await EmailSend.find(rangeQuery(from, to), {
     place_id: 1, status: 1, sent_at: 1, created_at: 1, template_id: 1,
-    variant: 1, followup: 1, attempt: 1, campaign: 1, provider_event: 1, tracking_id_hash: 1, landing_visit: 1,
+    variant: 1, followup: 1, attempt: 1, campaign: 1, provider_event: 1, search_category: 1,
+    template_key: 1, template_name: 1, variant_fingerprint: 1, variant_subject: 1, variant_band: 1,
+    tracking_id_hash: 1, reply_id_hash: 1, landing_visit: 1, reply_summary: 1,
   })
     .sort({ created_at: -1 })
     .limit(OVERVIEW_ROW_CAP)
@@ -192,6 +228,7 @@ analytics.get('/overview', async (req, res) => {
       variant: breakdown(rows, (r) => (r.variant == null ? null : `v${r.variant + 1}`)),
       campaign: breakdown(rows, (r) => r.campaign),
       attempt: breakdown(rows, (r) => `attempt_${r.attempt ?? 1}`),
+      category: breakdown(rows, (r) => r.search_category),
     },
     sync: {
       last_synced_at: state.last_synced_at,
@@ -256,19 +293,24 @@ analytics.get('/sends.csv', async (req, res) => {
 
   const header = [
     'lead', 'recipient', 'language', 'campaign', 'template', 'variant',
-    'attempt', 'status', 'sent_at', 'landing_status', 'first_visit', 'last_visit', 'sessions',
+    'category', 'attempt', 'status', 'sent_at', 'landing_status', 'first_visit', 'last_visit', 'sessions',
+    'reply_status', 'first_reply', 'last_reply', 'human_replies',
   ]
   const lines = rows.map((r) => {
     const s = serializeSend(r)
     const lv = s.landing_visit as Record<string, unknown>
     return [
-      s.lead_name, s.recipient, s.language, s.campaign, s.style, s.template_id,
-      s.variant == null ? '' : `v${Number(s.variant) + 1}`, s.attempt, s.status,
+      s.lead_name, s.recipient, s.language, s.campaign, s.template_id,
+      s.variant == null ? '' : `v${Number(s.variant) + 1}`, s.search_category, s.attempt, s.status,
       s.sent_at ? new Date(String(s.sent_at)).toISOString() : '',
       s.landing_status,
       lv.first_observed_at ? new Date(String(lv.first_observed_at)).toISOString() : '',
       lv.last_observed_at ? new Date(String(lv.last_observed_at)).toISOString() : '',
       lv.event_count,
+      s.reply_status,
+      (s.reply_summary as Record<string, unknown>).first_observed_at ? new Date(String((s.reply_summary as Record<string, unknown>).first_observed_at)).toISOString() : '',
+      (s.reply_summary as Record<string, unknown>).last_observed_at ? new Date(String((s.reply_summary as Record<string, unknown>).last_observed_at)).toISOString() : '',
+      (s.reply_summary as Record<string, unknown>).event_count,
     ].map(csvCell).join(',')
   })
   res.type('text/csv; charset=utf-8')
@@ -299,6 +341,11 @@ analytics.get('/sends/:id', async (req, res) => {
   if (lv.first_observed_at) timeline.push({ at: lv.first_observed_at, event: 'first_landing_visit' })
   if (lv.last_observed_at && lv.last_observed_at !== lv.first_observed_at && lv.event_count > 1) {
     timeline.push({ at: lv.last_observed_at, event: 'last_landing_visit', detail: `${lv.event_count} sessions` })
+  }
+  const reply = s.reply_summary as { first_observed_at: unknown; last_observed_at: unknown; event_count: number }
+  if (reply.first_observed_at) timeline.push({ at: reply.first_observed_at, event: 'first_human_reply' })
+  if (reply.last_observed_at && reply.last_observed_at !== reply.first_observed_at && reply.event_count > 1) {
+    timeline.push({ at: reply.last_observed_at, event: 'latest_human_reply', detail: `${reply.event_count} replies` })
   }
   res.json({ send: s, timeline })
 })

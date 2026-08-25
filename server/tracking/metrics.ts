@@ -23,12 +23,19 @@ export type SendRow = {
   sent_at: Date | string | null
   created_at?: Date | string
   template_id?: string
+  template_key?: string | null
+  template_name?: string | null
   variant?: number | null
+  variant_fingerprint?: string | null
+  variant_subject?: string | null
+  variant_band?: string | null
   followup?: number
   attempt?: number
   campaign?: string
   provider_event?: string | null
+  search_category?: string | null
   tracking_id_hash?: string | null
+  reply_id_hash?: string | null
   landing_visit?: {
     matched?: boolean
     event_count?: number
@@ -36,11 +43,21 @@ export type SendRow = {
     last_observed_at?: Date | string | null
     synced_at?: Date | string | null
   } | null
+  reply_summary?: {
+    matched?: boolean
+    event_count?: number
+    automatic_count?: number
+    first_observed_at?: Date | string | null
+    last_observed_at?: Date | string | null
+    unread_count?: number
+    synced_at?: Date | string | null
+  } | null
 }
 
 export const isSent = (r: SendRow): boolean =>
   r.status === 'sent' && !NON_DELIVERY_EVENTS.has(r.provider_event ?? '')
 export const isVisited = (r: SendRow): boolean => isSent(r) && r.landing_visit?.matched === true
+export const isReplied = (r: SendRow): boolean => isSent(r) && r.reply_summary?.matched === true
 export const isTracked = (r: SendRow): boolean => typeof r.tracking_id_hash === 'string'
 
 function toDate(v: Date | string | null | undefined): Date | null {
@@ -58,6 +75,14 @@ export function hoursToFirstVisit(r: SendRow): number | null {
   return h >= 0 ? h : null
 }
 
+export function hoursToFirstReply(r: SendRow): number | null {
+  const sent = toDate(r.sent_at)
+  const first = toDate(r.reply_summary?.first_observed_at ?? null)
+  if (!sent || !first) return null
+  const hours = (first.getTime() - sent.getTime()) / 3_600_000
+  return hours >= 0 ? hours : null
+}
+
 export function median(values: readonly number[]): number | null {
   if (!values.length) return null
   const sorted = [...values].sort((a, b) => a - b)
@@ -73,6 +98,11 @@ export type OverviewMetrics = {
   emails_sent: number
   visited_sends: number
   landing_visit_rate: number
+  replied_sends: number
+  reply_rate: number
+  unique_replied_leads: number
+  human_replies: number
+  median_hours_to_first_reply: number | null
   unique_visited_leads: number
   consented_sessions: number
   median_hours_to_first_visit: number | null
@@ -89,6 +119,8 @@ export function overviewMetrics(rows: readonly SendRow[]): OverviewMetrics {
   const sent = rows.filter(isSent)
   const visited = sent.filter(isVisited)
   const leadIds = new Set(visited.map((r) => r.place_id))
+  const replied = sent.filter(isReplied)
+  const repliedLeadIds = new Set(replied.map((r) => r.place_id))
   const sessions = visited.reduce((n, r) => n + (r.landing_visit?.event_count ?? 0), 0)
   const hours = visited
     .map(hoursToFirstVisit)
@@ -97,6 +129,11 @@ export function overviewMetrics(rows: readonly SendRow[]): OverviewMetrics {
     emails_sent: sent.length,
     visited_sends: visited.length,
     landing_visit_rate: rate(visited.length, sent.length),
+    replied_sends: replied.length,
+    reply_rate: rate(replied.length, sent.length),
+    unique_replied_leads: repliedLeadIds.size,
+    human_replies: replied.reduce((count, row) => count + (row.reply_summary?.event_count ?? 0), 0),
+    median_hours_to_first_reply: median(replied.map(hoursToFirstReply).filter((hours): hours is number => hours != null)),
     unique_visited_leads: leadIds.size,
     consented_sessions: sessions,
     median_hours_to_first_visit: median(hours),
@@ -115,13 +152,13 @@ export function dayKey(v: Date | string): string {
   return new Date(v).toISOString().slice(0, 10)
 }
 
-export type TimeseriesPoint = { day: string; sent: number; visited: number; rate: number }
+export type TimeseriesPoint = { day: string; sent: number; visited: number; replied: number; rate: number; reply_rate: number }
 
 /** Daily buckets over [from, to] — visits attributed to the SEND's day. */
 export function timeseries(rows: readonly SendRow[], from: Date, to: Date): TimeseriesPoint[] {
-  const buckets = new Map<string, { sent: number; visited: number }>()
+  const buckets = new Map<string, { sent: number; visited: number; replied: number }>()
   for (let t = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()); t <= to.getTime(); t += 86_400_000) {
-    buckets.set(new Date(t).toISOString().slice(0, 10), { sent: 0, visited: 0 })
+    buckets.set(new Date(t).toISOString().slice(0, 10), { sent: 0, visited: 0, replied: 0 })
   }
   for (const r of rows) {
     if (!isSent(r)) continue
@@ -132,8 +169,14 @@ export function timeseries(rows: readonly SendRow[], from: Date, to: Date): Time
     if (!bucket) continue
     bucket.sent += 1
     if (isVisited(r)) bucket.visited += 1
+    if (isReplied(r)) bucket.replied += 1
   }
-  return [...buckets.entries()].map(([day, b]) => ({ day, ...b, rate: rate(b.visited, b.sent) }))
+  return [...buckets.entries()].map(([day, b]) => ({
+    day,
+    ...b,
+    rate: rate(b.visited, b.sent),
+    reply_rate: rate(b.replied, b.sent),
+  }))
 }
 
 export type BreakdownRow = {
@@ -141,8 +184,12 @@ export type BreakdownRow = {
   sent: number
   visited: number
   rate: number
+  replied: number
+  reply_rate: number
+  human_replies: number
   sessions: number
   median_hours_to_first_visit: number | null
+  median_hours_to_first_reply: number | null
 }
 
 /**
@@ -196,16 +243,35 @@ export function breakdown(
     .map(([key, list]) => {
       const visited = list.filter(isVisited)
       const hours = visited.map(hoursToFirstVisit).filter((h): h is number => h != null)
+      const replied = list.filter(isReplied)
+      const replyHours = replied.map(hoursToFirstReply).filter((h): h is number => h != null)
       return {
         key,
         sent: list.length,
         visited: visited.length,
         rate: rate(visited.length, list.length),
+        replied: replied.length,
+        reply_rate: rate(replied.length, list.length),
+        human_replies: replied.reduce((count, row) => count + (row.reply_summary?.event_count ?? 0), 0),
         sessions: visited.reduce((n, r) => n + (r.landing_visit?.event_count ?? 0), 0),
         median_hours_to_first_visit: median(hours),
+        median_hours_to_first_reply: median(replyHours),
       }
     })
     .sort((a, b) => b.rate - a.rate || b.sent - a.sent)
+}
+
+export type ReplyStatus = 'replied' | 'no_reply' | 'untracked' | 'automatic' | 'failed' | 'queued' | 'dry_run' | 'bounced'
+
+export function replyStatusOf(r: SendRow): ReplyStatus {
+  if (r.status === 'failed') return 'failed'
+  if (r.status === 'queued') return 'queued'
+  if (r.status === 'sent_dry_run') return 'dry_run'
+  if (NON_DELIVERY_EVENTS.has(r.provider_event ?? '')) return 'bounced'
+  if (isReplied(r)) return 'replied'
+  if ((r.reply_summary?.automatic_count ?? 0) > 0) return 'automatic'
+  if (typeof r.reply_id_hash !== 'string') return 'untracked'
+  return 'no_reply'
 }
 
 /** Landing status of one row, as shown by the dashboard badges. */

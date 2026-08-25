@@ -419,6 +419,7 @@ export const retryDelivery = (id: string) =>
    Measures CONSENTED LANDING VISITS — never "email opens" (no pixel). */
 
 export type SendLandingStatus = 'visited' | 'no_visit' | 'untracked' | 'failed' | 'queued' | 'dry_run' | 'bounced'
+export type SendReplyStatus = 'replied' | 'no_reply' | 'untracked' | 'automatic' | 'failed' | 'queued' | 'dry_run' | 'bounced'
 
 export type EmailSendRow = {
   id: string
@@ -427,8 +428,14 @@ export type EmailSendRow = {
   recipient: string
   language: string | null
   campaign: string | null
+  search_category: string | null
   template_id: string | null
+  template_key: string | null
+  template_name: string | null
   variant: number | null
+  variant_fingerprint: string | null
+  variant_subject: string | null
+  variant_band: string | null
   followup: number
   attempt: number
   status: 'queued' | 'sent' | 'sent_dry_run' | 'failed'
@@ -441,11 +448,21 @@ export type EmailSendRow = {
   /** Masked (never the full hash, never the raw rid). */
   tracking_hash_masked: string | null
   landing_status: SendLandingStatus
+  reply_status: SendReplyStatus
   landing_visit: {
     matched: boolean
     event_count: number
     first_observed_at: string | null
     last_observed_at: string | null
+    synced_at: string | null
+  }
+  reply_summary: {
+    matched: boolean
+    event_count: number
+    automatic_count: number
+    first_observed_at: string | null
+    last_observed_at: string | null
+    unread_count: number
     synced_at: string | null
   }
 }
@@ -455,8 +472,12 @@ export type BreakdownRow = {
   sent: number
   visited: number
   rate: number
+  replied: number
+  reply_rate: number
+  human_replies: number
   sessions: number
   median_hours_to_first_visit: number | null
+  median_hours_to_first_reply: number | null
 }
 
 export type AnalyticsOverview = {
@@ -465,6 +486,11 @@ export type AnalyticsOverview = {
     emails_sent: number
     visited_sends: number
     landing_visit_rate: number
+    replied_sends: number
+    reply_rate: number
+    unique_replied_leads: number
+    human_replies: number
+    median_hours_to_first_reply: number | null
     unique_visited_leads: number
     consented_sessions: number
     median_hours_to_first_visit: number | null
@@ -476,8 +502,8 @@ export type AnalyticsOverview = {
     bounced_sends: number
     complained_sends: number
   }
-  timeseries: Array<{ day: string; sent: number; visited: number; rate: number }>
-  breakdowns: Record<'template' | 'variant' | 'campaign' | 'attempt', BreakdownRow[]>
+  timeseries: Array<{ day: string; sent: number; visited: number; replied: number; rate: number; reply_rate: number }>
+  breakdowns: Record<'template' | 'variant' | 'campaign' | 'attempt' | 'category', BreakdownRow[]>
   sync: {
     last_synced_at: string | null
     last_sync_ok: boolean | null

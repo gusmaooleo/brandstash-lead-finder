@@ -52,6 +52,15 @@ describe('overview metrics', () => {
     expect(m.landing_visit_rate).toBeCloseTo((2 / 3) * 100)
   })
 
+  it('counts replied sends once while preserving total human messages', () => {
+    const replied = send({ reply_summary: { matched: true, event_count: 3, first_observed_at: '2026-08-10T14:00:00Z' } })
+    const metrics = overviewMetrics([replied, send({ place_id: 'p2' })])
+    expect(metrics.replied_sends).toBe(1)
+    expect(metrics.human_replies).toBe(3)
+    expect(metrics.reply_rate).toBe(50)
+    expect(metrics.median_hours_to_first_reply).toBe(2)
+  })
+
   it('distinct leads: two visited sends of the same lead = one unique lead', () => {
     const m = overviewMetrics([visited({ place_id: 'same' }), visited({ place_id: 'same', attempt: 2 })])
     expect(m.visited_sends).toBe(2)
@@ -125,9 +134,9 @@ describe('timeseries', () => {
     ]
     const points = timeseries(rows, new Date('2026-08-09T00:00:00Z'), new Date('2026-08-11T23:59:59Z'))
     expect(points.map((p) => p.day)).toEqual(['2026-08-09', '2026-08-10', '2026-08-11'])
-    expect(points[0]).toEqual({ day: '2026-08-09', sent: 0, visited: 0, rate: 0 })
-    expect(points[1]).toEqual({ day: '2026-08-10', sent: 2, visited: 1, rate: 50 })
-    expect(points[2]).toEqual({ day: '2026-08-11', sent: 1, visited: 1, rate: 100 })
+    expect(points[0]).toEqual({ day: '2026-08-09', sent: 0, visited: 0, replied: 0, rate: 0, reply_rate: 0 })
+    expect(points[1]).toEqual({ day: '2026-08-10', sent: 2, visited: 1, replied: 0, rate: 50, reply_rate: 0 })
+    expect(points[2]).toEqual({ day: '2026-08-11', sent: 1, visited: 1, replied: 0, rate: 100, reply_rate: 0 })
   })
 })
 
