@@ -518,6 +518,12 @@ export type AnalyticsOverview = {
     last_sync_events: number
     /** Cold-email visits on the landing that belong to no send of ours. */
     last_sync_unattributed: number
+    last_reply_synced_at: string | null
+    last_reply_sync_ok: boolean | null
+    last_reply_sync_error: string | null
+    last_reply_sync_checked: number
+    last_reply_sync_created: number
+    last_reply_sync_unattributed: number
   }
 }
 
@@ -560,6 +566,42 @@ export type SyncResult = {
   error: string | null
 }
 
+export type ReplySyncResult = {
+  ok: boolean
+  enabled: boolean
+  synced_at: string
+  checked: number
+  created: number
+  human: number
+  automatic: number
+  bounced: number
+  unattributed: number
+  error: string | null
+}
+
+export type InboundReplyRow = {
+  id: string
+  email_send_id: string | null
+  place_id: string | null
+  from_email: string
+  from_name: string | null
+  to_email: string
+  subject: string
+  preview: string
+  correlation: 'exact' | 'unattributed'
+  received_at: string
+  read_at: string | null
+  lead_name: string | null
+  recipient: string | null
+  search_category: string | null
+  campaign: string | null
+  template_id: string | null
+  template_name: string | null
+  variant: number | null
+  variant_subject: string | null
+  attempt: number | null
+}
+
 export type SendTimelineEntry = { at: string | null; event: string; detail?: string }
 
 const toQuery = (params: Record<string, string>) => {
@@ -578,4 +620,15 @@ export const getSendDetail = (id: string) =>
   request<{ send: EmailSendRow; timeline: SendTimelineEntry[] }>(`/api/analytics/sends/${id}`)
 export const runAnalyticsSync = () =>
   request<SyncResult>('/api/analytics/sync', { method: 'POST' })
+export const runReplySync = () =>
+  request<ReplySyncResult>('/api/analytics/replies/sync', { method: 'POST' })
+export const getReplyInbox = (params: Record<string, string> = {}) =>
+  request<{ total: number; unread: number; page: number; page_size: number; replies: InboundReplyRow[] }>(
+    `/api/analytics/replies${toQuery(params)}`,
+  )
+export const getUnreadReplyCount = () => request<{ unread: number }>('/api/analytics/replies/count')
+export const markReplyRead = (id: string) =>
+  request<{ ok: true; read_at: string }>(`/api/analytics/replies/${id}/read`, { method: 'POST' })
+export const markAllRepliesRead = () =>
+  request<{ ok: true; marked: number }>('/api/analytics/replies/read-all', { method: 'POST' })
 export const sendsCsvUrl = (params: Record<string, string>) => `/api/analytics/sends.csv${toQuery(params)}`

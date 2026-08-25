@@ -17,6 +17,7 @@ import {
   getAnalyticsSends,
   getSendDetail,
   runAnalyticsSync,
+  runReplySync,
   sendsCsvUrl,
   type AnalyticsOverview,
   type BreakdownRow,
@@ -29,6 +30,7 @@ import { Button, Chip, Input, Select, SectionLabel } from './ui'
 import { ThemeToggle, useTheme } from './ThemeToggle'
 import { SendsChart } from './SendsChart'
 import { PerformanceLearning } from './PerformanceLearning'
+import { ReplyInbox } from './ReplyInbox'
 
 /* ── small formatters ─────────────────────────────────────────────────── */
 
@@ -235,6 +237,7 @@ export function AnalyticsPage() {
 
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncNote, setSyncNote] = useState<string | null>(null)
+  const [replyRefreshKey, setReplyRefreshKey] = useState(0)
 
   const [groupBy, setGroupBy] = useState<keyof AnalyticsOverview['breakdowns']>('template')
 
@@ -290,12 +293,13 @@ export function AnalyticsPage() {
     setSyncBusy(true)
     setSyncNote(null)
     try {
-      const result = await runAnalyticsSync()
+      const [landing, replies] = await Promise.all([runAnalyticsSync(), runReplySync()])
       setSyncNote(
-        result.ok
-          ? `Synced: ${result.events_seen} event${result.events_seen === 1 ? '' : 's'} across ${result.sends_with_tracking} tracked sends.`
+        landing.ok && replies.ok
+          ? `Synced ${landing.events_seen} landing event${landing.events_seen === 1 ? '' : 's'}${replies.enabled ? ` and ${replies.created} new inbox message${replies.created === 1 ? '' : 's'}` : ''}.`
           : null,
       )
+      setReplyRefreshKey((value) => value + 1)
       await Promise.all([loadOverview(), loadSends()])
     } catch (e) {
       setOverviewError(e instanceof Error ? e.message : String(e))
@@ -328,11 +332,16 @@ export function AnalyticsPage() {
                 <Chip className="tint-bad">last sync failed</Chip>
               </span>
             )}
+            {sync?.last_reply_sync_ok === false && (
+              <span title={sync.last_reply_sync_error ?? undefined}>
+                <Chip className="tint-bad">reply sync failed</Chip>
+              </span>
+            )}
             <span className="text-[11.5px] text-gray-3">
-              {syncBusy ? 'Syncing landing data…' : sync?.last_synced_at ? `synced ${fmtDateTime(sync.last_synced_at)}` : 'never synced'}
+              {syncBusy ? 'Syncing signals…' : sync?.last_synced_at ? `synced ${fmtDateTime(sync.last_synced_at)}` : 'never synced'}
             </span>
             <Button variant="green" onClick={onSync} disabled={syncBusy} className="!px-3.5 !py-1.5 !text-[12.5px]">
-              {syncBusy ? 'Syncing…' : '⟳ Sync landing data'}
+              {syncBusy ? 'Syncing…' : '⟳ Sync signals'}
             </Button>
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
           </div>
@@ -350,6 +359,11 @@ export function AnalyticsPage() {
             <div className="tint-warn brand-rise rounded-xl border px-4 py-2.5 text-[12.5px]">
               The last landing sync failed ({sync.last_sync_error ?? 'unknown error'}). Numbers below come from the
               last successful reconciliation — missing visits here mean "not synced yet", not "no visits".
+            </div>
+          )}
+          {sync?.last_reply_sync_ok === false && (
+            <div className="tint-warn brand-rise rounded-xl border px-4 py-2.5 text-[12.5px]">
+              The last reply sync failed ({sync.last_reply_sync_error ?? 'unknown error'}). Existing replies remain available below.
             </div>
           )}
           {syncNote && <div className="tint-good brand-rise rounded-xl border px-4 py-2.5 text-[12.5px]">{syncNote}</div>}
@@ -410,6 +424,8 @@ export function AnalyticsPage() {
           </section>
 
           {overview && <PerformanceLearning learning={overview.learning} />}
+
+          <ReplyInbox refreshKey={replyRefreshKey} onOpenSend={setDrawerId} />
 
           {/* chart */}
           <section className="brand-rise rounded-3xl border border-line bg-card p-4">

@@ -47,6 +47,8 @@
   --color-chart-sent: #3b82f6;
   --color-chart-visited: #059669;
   --color-chart-replied: #f59e0b;
+  --color-reply: #f59e0b;
+  --color-reply-soft: rgb(245 158 11 / 0.1);
 
   /* shadcn-style tokens consumed by the mapcn ui components (map.tsx) */
   --color-background: #0a0a0b;
@@ -83,6 +85,8 @@ html.light {
   --color-chart-sent: #2563eb;
   --color-chart-visited: #059669;
   --color-chart-replied: #d97706;
+  --color-reply: #b45309;
+  --color-reply-soft: rgb(217 119 6 / 0.08);
   --color-background: #fbfbfa;
   --color-foreground: #0b0b0c;
   --color-muted: #f1f0ec;
@@ -146,6 +150,11 @@ html.light *::-webkit-scrollbar-thumb {
   background-color: rgb(248 113 113 / 0.1);
   color: #fca5a5;
 }
+.tint-reply {
+  border-color: rgb(245 158 11 / 0.3);
+  background-color: rgb(245 158 11 / 0.1);
+  color: #fbbf24;
+}
 button.tint-good:not(:disabled):hover {
   background-color: rgb(52 211 153 / 0.2);
 }
@@ -172,6 +181,11 @@ html.light .tint-bad {
   border-color: #fecaca;
   background-color: #fef2f2;
   color: #b91c1c;
+}
+html.light .tint-reply {
+  border-color: #fcd34d;
+  background-color: #fffbeb;
+  color: #b45309;
 }
 html.light button.tint-good:not(:disabled):hover {
   background-color: #d1fae5;

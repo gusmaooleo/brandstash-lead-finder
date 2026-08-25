@@ -6,6 +6,7 @@ import {
   getLeads,
   getMarkets,
   getStatus,
+  getUnreadReplyCount,
   saveConfig,
   startDiscovery,
   stopDiscovery,
@@ -63,6 +64,7 @@ export default function App() {
   /** Feed order — 'found' is newest-first, 'score' ranks by the profile analysis. */
   const [sort, setSort] = useState<'found' | 'score'>('found')
   const [loadingLeads, setLoadingLeads] = useState(false)
+  const [unreadReplies, setUnreadReplies] = useState(0)
   const [error, setError] = useState<string | null>(null)
   /** `<leadId>:<action>` while an inline row action is in flight. */
   const [rowBusy, setRowBusy] = useState<string | null>(null)
@@ -164,6 +166,13 @@ export default function App() {
     const t = setInterval(() => void refreshStatus(), 3000)
     return () => clearInterval(t)
   }, [refreshStatus])
+
+  useEffect(() => {
+    const refresh = () => void getUnreadReplyCount().then((result) => setUnreadReplies(result.unread)).catch(() => {})
+    refresh()
+    const timer = window.setInterval(refresh, 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     void refreshLeads()
@@ -379,10 +388,15 @@ export default function App() {
             </button>
             <button
               onClick={() => navigate('/email-analytics')}
-              className="hidden rounded-lg border border-line bg-paper-2 px-2.5 py-1.5 text-[12px] text-gray-2 transition-colors hover:border-line-2 hover:text-ink sm:block"
-              title="Cold email performance — consented landing visits"
+              className="relative hidden rounded-lg border border-line bg-paper-2 px-2.5 py-1.5 text-[12px] text-gray-2 transition-colors hover:border-line-2 hover:text-ink sm:block"
+              title="Cold email performance, replies, and consented landing visits"
             >
               ▤ Analytics
+              {unreadReplies > 0 && (
+                <span className="absolute -right-2 -top-2 min-w-5 rounded-full border border-paper bg-reply px-1.5 py-0.5 font-mono text-[9px] font-bold leading-none text-paper tabular-nums">
+                  {unreadReplies > 99 ? '99+' : unreadReplies}
+                </span>
+              )}
             </button>
             <span className="flex items-center gap-1.5 text-[12px] text-gray-1">
               <span

@@ -30,6 +30,8 @@ import {
   type SendRow,
 } from '../tracking/metrics'
 import { syncInboundReplies } from '../replies/resend'
+import { InboundReply } from '../replies/models'
+import { refreshReplySummary } from '../replies/store'
 import { ATTRIBUTION_WINDOW_DAYS, MIN_PERFORMANCE_SAMPLE, rankCategories, rankVariants } from '../tracking/learning'
 
 export const analytics = Router()
@@ -246,6 +248,12 @@ analytics.get('/overview', async (req, res) => {
       last_sync_sends: state.last_sync_sends,
       last_sync_events: state.last_sync_events,
       last_sync_unattributed: state.last_sync_unattributed,
+      last_reply_synced_at: state.last_reply_synced_at,
+      last_reply_sync_ok: state.last_reply_sync_ok,
+      last_reply_sync_error: state.last_reply_sync_error,
+      last_reply_sync_checked: state.last_reply_sync_checked,
+      last_reply_sync_created: state.last_reply_sync_created,
+      last_reply_sync_unattributed: state.last_reply_sync_unattributed,
     },
   })
 })
@@ -260,6 +268,113 @@ analytics.post('/sync', async (_req, res) => {
 
 analytics.post('/replies/sync', async (_req, res) => {
   res.json(await syncInboundReplies())
+})
+
+type LeanReply = {
+  _id: unknown
+  email_send_id?: unknown
+  place_id?: string | null
+  from_email: string
+  from_name?: string | null
+  to_email: string
+  subject?: string
+  preview?: string
+  correlation: 'exact' | 'unattributed'
+  received_at: Date
+  read_at?: Date | null
+}
+
+type ReplySend = {
+  _id: unknown
+  lead_name: string
+  recipient: string
+  search_category?: string | null
+  campaign?: string | null
+  template_id?: string | null
+  template_name?: string | null
+  variant?: number | null
+  variant_subject?: string | null
+  attempt?: number
+}
+
+function serializeReply(row: LeanReply, send?: ReplySend): Record<string, unknown> {
+  return {
+    id: String(row._id),
+    email_send_id: send ? String(send._id) : null,
+    place_id: row.place_id ?? null,
+    from_email: row.from_email,
+    from_name: row.from_name ?? null,
+    to_email: row.to_email,
+    subject: row.subject ?? '',
+    preview: row.preview ?? '',
+    correlation: row.correlation,
+    received_at: row.received_at,
+    read_at: row.read_at ?? null,
+    lead_name: send?.lead_name ?? null,
+    recipient: send?.recipient ?? null,
+    search_category: send?.search_category ?? null,
+    campaign: send?.campaign ?? null,
+    template_id: send?.template_id ?? null,
+    template_name: send?.template_name ?? null,
+    variant: send?.variant ?? null,
+    variant_subject: send?.variant_subject ?? null,
+    attempt: send?.attempt ?? null,
+  }
+}
+
+analytics.get('/replies/count', async (_req, res) => {
+  const unread = await InboundReply.countDocuments({ kind: 'human', read_at: null })
+  res.json({ unread })
+})
+
+analytics.get('/replies', async (req, res) => {
+  const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(50, Math.max(1, Number.parseInt(String(req.query.page_size ?? '20'), 10) || 20))
+  const query: Record<string, unknown> = { kind: 'human' }
+  if (req.query.unread === 'true') query.read_at = null
+  if (req.query.q) {
+    const rx = { $regex: escapeRegex(String(req.query.q).slice(0, 80)), $options: 'i' }
+    query.$or = [{ from_email: rx }, { from_name: rx }, { subject: rx }, { preview: rx }]
+  }
+  const [total, unread, rows] = await Promise.all([
+    InboundReply.countDocuments(query),
+    InboundReply.countDocuments({ kind: 'human', read_at: null }),
+    InboundReply.find(query).sort({ received_at: -1 }).skip((page - 1) * pageSize).limit(pageSize).lean(),
+  ])
+  const sendIds = [...new Set(rows.map((row) => row.email_send_id).filter(Boolean).map(String))]
+  const sends = sendIds.length
+    ? ((await EmailSend.find(
+        { _id: { $in: sendIds } },
+        { lead_name: 1, recipient: 1, search_category: 1, campaign: 1, template_id: 1, template_name: 1, variant: 1, variant_subject: 1, attempt: 1 },
+      ).lean()) as unknown as ReplySend[])
+    : []
+  const sendById = new Map(sends.map((send) => [String(send._id), send]))
+  res.json({
+    total,
+    unread,
+    page,
+    page_size: pageSize,
+    replies: (rows as unknown as LeanReply[]).map((row) => serializeReply(row, row.email_send_id ? sendById.get(String(row.email_send_id)) : undefined)),
+  })
+})
+
+analytics.post('/replies/read-all', async (_req, res) => {
+  const sendIds = (await InboundReply.distinct('email_send_id', { kind: 'human', read_at: null })).filter(Boolean).map(String)
+  const result = await InboundReply.updateMany({ kind: 'human', read_at: null }, { $set: { read_at: new Date() } })
+  await Promise.all(sendIds.map((id) => refreshReplySummary(id)))
+  res.json({ ok: true, marked: result.modifiedCount })
+})
+
+analytics.post('/replies/:id/read', async (req, res) => {
+  if (!Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ error: 'reply not found' })
+  const reply = await InboundReply.findOneAndUpdate(
+    { _id: req.params.id, kind: 'human' },
+    { $set: { read_at: new Date() } },
+    { new: true },
+  ).lean()
+  if (!reply) return res.status(404).json({ error: 'reply not found' })
+  if (reply.email_send_id) await refreshReplySummary(String(reply.email_send_id))
+  res.json({ ok: true, read_at: reply.read_at })
 })
 
 /* ── sends table (search / filters / sort / pagination) ───────────────── */
