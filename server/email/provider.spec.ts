@@ -78,6 +78,11 @@ describe('ResendMailProvider', () => {
     expect(JSON.parse(init.body as string)).not.toHaveProperty('text')
   })
 
+  it('uses the per-send reply address when one is supplied', () => {
+    const { init } = new ResendMailProvider().buildRequest(mail({ replyTo: 'Acme <reply-token@reply.acme.example>' }))
+    expect(JSON.parse(init.body as string).reply_to).toBe('Acme <reply-token@reply.acme.example>')
+  })
+
   it('returns the Resend id as messageId on success', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ id: 'abc-123' }), { status: 200 }))
     const out = await new ResendMailProvider(fetchImpl as unknown as typeof fetch).send(mail())

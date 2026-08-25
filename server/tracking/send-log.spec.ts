@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { generateRid, hashRid, TRACKING_HASH_PATTERN } from './rid'
 import { buildSendRecord } from './send-log'
 import { sanitizeDbError } from './landing-db'
+import { setSettingsForTests } from '../settings/settings'
 
 const lead = {
   place_id: 'ChIJrecord1',
@@ -45,6 +46,20 @@ describe('persisted send record', () => {
     const a = buildSendRecord({ lead, recipient: 'a@b.co', followupNumber: 0 }, hashRid(generateRid()))
     const b = buildSendRecord({ lead, recipient: 'a@b.co', followupNumber: 1 }, hashRid(generateRid()))
     expect(a.tracking_id_hash).not.toBe(b.tracking_id_hash)
+  })
+
+  it('stores only a hash for the private reply address', () => {
+    setSettingsForTests({ replies: { enabled: true, receivingDomain: 'reply.acme.example', resendKey: 're_test' } })
+    const rid = generateRid()
+    const record = buildSendRecord(
+      { lead, recipient: 'a@b.co', followupNumber: 0 },
+      hashRid(rid),
+      undefined,
+      null,
+      hashRid(rid.toLowerCase()),
+    )
+    expect(record.reply_id_hash).toBe(hashRid(rid.toLowerCase()))
+    expect(JSON.stringify(record)).not.toContain(rid)
   })
 })
 

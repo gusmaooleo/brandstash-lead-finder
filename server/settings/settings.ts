@@ -404,7 +404,7 @@ export async function updateSettings(patch: SettingsPatch): Promise<RuntimeSetti
     }
     if (r.local_part !== undefined) {
       const localPart = String(r.local_part).trim().toLowerCase()
-      if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(localPart)) {
+      if (!/^[a-z0-9][a-z0-9._-]{0,19}$/.test(localPart)) {
         throw new Error('Reply address prefix must use letters, numbers, dots, underscores or hyphens')
       }
       $set['replies.local_part'] = localPart

@@ -21,6 +21,7 @@ import { campaignFor, templateIdFor } from './landing-url'
 import { NoTemplateError } from '../email/sender'
 import { resolveTemplate, type ResolvedTemplate } from '../email/template-store'
 import { searchedCategory } from '../../shared/types'
+import { replyTrackingReady } from '../settings/settings'
 
 export type BeginTrackedSendInput = {
   lead: Pick<LeadDoc, 'place_id' | 'name' | 'language' | 'market_scope'> & {
@@ -48,6 +49,7 @@ export function buildSendRecord(
   trackingIdHash: string,
   templateId?: string,
   template?: ResolvedTemplate | null,
+  replyIdHash?: string | null,
 ): Record<string, unknown> {
   return {
     place_id: input.lead.place_id,
@@ -66,6 +68,7 @@ export function buildSendRecord(
     status: 'queued',
     tracking_schema_version: 1,
     tracking_id_hash: trackingIdHash,
+    reply_id_hash: replyIdHash ?? null,
   }
 }
 
@@ -95,7 +98,8 @@ export async function beginTrackedSend(input: BeginTrackedSendInput): Promise<Tr
       })))
   if (!template && !input.oneOff) throw new NoTemplateError(String(input.lead.language ?? 'en'))
   const templateId = template ? templateIdFor(template.id, input.followupNumber) : 'one_off'
-  const record = buildSendRecord(input, hashRid(rid), templateId, template)
+  const replyIdHash = replyTrackingReady().ready ? hashRid(rid.toLowerCase()) : null
+  const record = buildSendRecord(input, hashRid(rid), templateId, template, replyIdHash)
   const doc = await EmailSend.create(record)
   return { rid, sendId: String(doc._id), campaign: String(record.campaign), template }
 }

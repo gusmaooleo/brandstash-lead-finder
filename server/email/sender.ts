@@ -32,6 +32,7 @@ import type { EmailLanguage } from '../../shared/types'
 import type { PlaceProfileSummary } from '../scoring/types'
 import type { RulesAnalysisResult } from '../scoring/analyze'
 import { variantFingerprint } from '../tracking/experiment'
+import { replyAddressForRid } from './reply-address'
 
 export async function isSuppressed(email: string): Promise<boolean> {
   return Boolean(await Suppression.exists({ email: email.toLowerCase() }))
@@ -313,6 +314,7 @@ export async function sendLeadEmail(
         'List-Unsubscribe': `<${buildUnsubscribeUrl(token)}>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       },
+      replyTo: replyAddressForRid(opts.rid),
       sendKey: `${token}-f${rendered.followupNumber}`,
     })
     return { ok: true, state: 'sent', messageId, error: null, ...base }

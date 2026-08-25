@@ -27,6 +27,7 @@ export type OutgoingMail = {
   text?: string | null
   /** Extra RFC-822 headers (List-Unsubscribe, …). */
   headers: Record<string, string>
+  replyTo?: string | null
   /**
    * Stable identity of this logical send (lead token + follow-up number).
    * Providers that support idempotency use it (+ recipient) to dedupe
@@ -78,7 +79,7 @@ class SmtpMailProvider implements MailProvider {
     const info = await this.getTransporter().sendMail({
       from: { name: settings().email.from.name, address: settings().email.from.email },
       to: mail.to,
-      replyTo: settings().email.replyTo.label || undefined,
+      replyTo: mail.replyTo || settings().email.replyTo.label || undefined,
       subject: mail.subject,
       html: mail.html,
       text: mail.text ?? undefined,
@@ -108,7 +109,8 @@ export class ResendMailProvider implements MailProvider {
       headers: mail.headers,
     }
     if (mail.text) body.text = mail.text
-    if (settings().email.replyTo.label) body.reply_to = settings().email.replyTo.label
+    const replyTo = mail.replyTo || settings().email.replyTo.label
+    if (replyTo) body.reply_to = replyTo
     return {
       url: RESEND_ENDPOINT,
       init: {

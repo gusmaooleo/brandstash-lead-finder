@@ -75,6 +75,7 @@ const emailSendSchema = new Schema(
     tracking_schema_version: { type: Number, required: true, default: 1 },
     /** sha256(rid) hex — the raw rid is never persisted anywhere. */
     tracking_id_hash: { type: String, default: null },
+    reply_id_hash: { type: String, default: null },
 
     landing_visit: { type: landingVisitSummarySchema, required: true, default: () => ({}) },
   },
@@ -84,6 +85,10 @@ const emailSendSchema = new Schema(
 emailSendSchema.index(
   { tracking_id_hash: 1 },
   { unique: true, partialFilterExpression: { tracking_id_hash: { $type: 'string' } } },
+)
+emailSendSchema.index(
+  { reply_id_hash: 1 },
+  { unique: true, partialFilterExpression: { reply_id_hash: { $type: 'string' } } },
 )
 emailSendSchema.index({ created_at: -1 })
 
