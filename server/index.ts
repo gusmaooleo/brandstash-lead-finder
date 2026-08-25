@@ -14,6 +14,7 @@ import { warnMailConfig } from './email/provider'
 import { loadSettings, settingsSummary } from './settings/settings'
 import { hasEncryptionKey } from './settings/crypto'
 import { startBounceSyncLoop } from './email/bounce-sync'
+import { startReplySyncLoop } from './replies/resend'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webDist = path.resolve(__dirname, '../dist/web')
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
   startEngineLoop()
   startRetentionLoop()
   startBounceSyncLoop()
+  startReplySyncLoop()
 }
 
 main().catch((err) => {

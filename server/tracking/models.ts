@@ -118,6 +118,12 @@ const trackingStateSchema = new Schema(
     last_sync_events: { type: Number, default: 0 },
     /** Cold-email visits on the landing that matched no send of ours. */
     last_sync_unattributed: { type: Number, default: 0 },
+    last_reply_synced_at: { type: Date, default: null },
+    last_reply_sync_ok: { type: Boolean, default: null },
+    last_reply_sync_error: { type: String, default: null },
+    last_reply_sync_checked: { type: Number, default: 0 },
+    last_reply_sync_created: { type: Number, default: 0 },
+    last_reply_sync_unattributed: { type: Number, default: 0 },
   },
   { collection: 'tracking_state', timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } },
 )

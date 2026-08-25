@@ -28,6 +28,7 @@ import {
   timeseries,
   type SendRow,
 } from '../tracking/metrics'
+import { syncInboundReplies } from '../replies/resend'
 
 export const analytics = Router()
 
@@ -209,6 +210,10 @@ analytics.post('/sync', async (_req, res) => {
   // ok:false = the landing store could not be queried — a state the UI shows
   // as a sync error, never as "no visits".
   res.json(await syncLandingVisits())
+})
+
+analytics.post('/replies/sync', async (_req, res) => {
+  res.json(await syncInboundReplies())
 })
 
 /* ── sends table (search / filters / sort / pagination) ───────────────── */
