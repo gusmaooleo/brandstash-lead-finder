@@ -30,6 +30,19 @@ const landingVisitSummarySchema = new Schema(
   { _id: false },
 )
 
+const replySummarySchema = new Schema(
+  {
+    matched: { type: Boolean, required: true, default: false },
+    event_count: { type: Number, required: true, default: 0 },
+    automatic_count: { type: Number, required: true, default: 0 },
+    first_observed_at: { type: Date, default: null },
+    last_observed_at: { type: Date, default: null },
+    unread_count: { type: Number, required: true, default: 0 },
+    synced_at: { type: Date, default: null },
+  },
+  { _id: false },
+)
+
 const emailSendSchema = new Schema(
   {
     /** Stable lead key (leads move approval_list → approved; place_id survives). */
@@ -78,6 +91,7 @@ const emailSendSchema = new Schema(
     reply_id_hash: { type: String, default: null },
 
     landing_visit: { type: landingVisitSummarySchema, required: true, default: () => ({}) },
+    reply_summary: { type: replySummarySchema, required: true, default: () => ({}) },
   },
   { collection: 'email_sends', timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } },
 )
