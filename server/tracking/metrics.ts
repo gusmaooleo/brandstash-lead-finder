@@ -14,7 +14,7 @@
  *  - consented_sessions   = Σ landing_visit.event_count of visited sends
  */
 
-export const SENT_STATES = new Set(['sent', 'sent_dry_run'])
+export const NON_DELIVERY_EVENTS = new Set(['bounced', 'complained'])
 
 /** The lean shape the analytics endpoints read (projection of EmailSend). */
 export type SendRow = {
@@ -27,6 +27,7 @@ export type SendRow = {
   followup?: number
   attempt?: number
   campaign?: string
+  provider_event?: string | null
   tracking_id_hash?: string | null
   landing_visit?: {
     matched?: boolean
@@ -37,7 +38,8 @@ export type SendRow = {
   } | null
 }
 
-export const isSent = (r: SendRow): boolean => SENT_STATES.has(r.status)
+export const isSent = (r: SendRow): boolean =>
+  r.status === 'sent' && !NON_DELIVERY_EVENTS.has(r.provider_event ?? '')
 export const isVisited = (r: SendRow): boolean => isSent(r) && r.landing_visit?.matched === true
 export const isTracked = (r: SendRow): boolean => typeof r.tracking_id_hash === 'string'
 
@@ -78,6 +80,9 @@ export type OverviewMetrics = {
   untracked_sends: number
   failed_sends: number
   queued_sends: number
+  dry_run_sends: number
+  bounced_sends: number
+  complained_sends: number
 }
 
 export function overviewMetrics(rows: readonly SendRow[]): OverviewMetrics {
@@ -99,6 +104,9 @@ export function overviewMetrics(rows: readonly SendRow[]): OverviewMetrics {
     untracked_sends: rows.filter((r) => !isTracked(r)).length,
     failed_sends: rows.filter((r) => r.status === 'failed').length,
     queued_sends: rows.filter((r) => r.status === 'queued').length,
+    dry_run_sends: rows.filter((r) => r.status === 'sent_dry_run').length,
+    bounced_sends: rows.filter((r) => r.provider_event === 'bounced').length,
+    complained_sends: rows.filter((r) => r.provider_event === 'complained').length,
   }
 }
 
@@ -201,11 +209,13 @@ export function breakdown(
 }
 
 /** Landing status of one row, as shown by the dashboard badges. */
-export type LandingStatus = 'visited' | 'no_visit' | 'untracked' | 'failed' | 'queued'
+export type LandingStatus = 'visited' | 'no_visit' | 'untracked' | 'failed' | 'queued' | 'dry_run' | 'bounced'
 
 export function landingStatusOf(r: SendRow): LandingStatus {
   if (r.status === 'failed') return 'failed'
   if (r.status === 'queued') return 'queued'
+  if (r.status === 'sent_dry_run') return 'dry_run'
+  if (NON_DELIVERY_EVENTS.has(r.provider_event ?? '')) return 'bounced'
   if (!isTracked(r)) return 'untracked'
   return isVisited(r) ? 'visited' : 'no_visit'
 }

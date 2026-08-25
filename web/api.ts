@@ -408,7 +408,7 @@ export const retryDelivery = (id: string) =>
 /* ── cold-email analytics (/email-analytics) ─────────────────────────────
    Measures CONSENTED LANDING VISITS — never "email opens" (no pixel). */
 
-export type SendLandingStatus = 'visited' | 'no_visit' | 'untracked' | 'failed' | 'queued'
+export type SendLandingStatus = 'visited' | 'no_visit' | 'untracked' | 'failed' | 'queued' | 'dry_run' | 'bounced'
 
 export type EmailSendRow = {
   id: string
@@ -462,6 +462,9 @@ export type AnalyticsOverview = {
     untracked_sends: number
     failed_sends: number
     queued_sends: number
+    dry_run_sends: number
+    bounced_sends: number
+    complained_sends: number
   }
   timeseries: Array<{ day: string; sent: number; visited: number; rate: number }>
   breakdowns: Record<'template' | 'variant' | 'campaign' | 'attempt', BreakdownRow[]>

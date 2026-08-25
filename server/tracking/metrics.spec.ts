@@ -73,6 +73,20 @@ describe('overview metrics', () => {
     expect(m.queued_sends).toBe(1)
   })
 
+  it('excludes dry runs, bounces and complaints from performance denominators', () => {
+    const m = overviewMetrics([
+      send(),
+      visited({ status: 'sent_dry_run' }),
+      visited({ provider_event: 'bounced' }),
+      visited({ provider_event: 'complained' }),
+    ])
+    expect(m.emails_sent).toBe(1)
+    expect(m.visited_sends).toBe(0)
+    expect(m.dry_run_sends).toBe(1)
+    expect(m.bounced_sends).toBe(1)
+    expect(m.complained_sends).toBe(1)
+  })
+
   it('median hours from send to first visit', () => {
     expect(median([1, 5, 100])).toBe(5)
     expect(median([2, 4])).toBe(3)
@@ -97,6 +111,8 @@ describe('untracked & badge classification', () => {
     expect(landingStatusOf(send())).toBe('no_visit')
     expect(landingStatusOf(send({ status: 'failed' }))).toBe('failed')
     expect(landingStatusOf(send({ status: 'queued' }))).toBe('queued')
+    expect(landingStatusOf(send({ status: 'sent_dry_run' }))).toBe('dry_run')
+    expect(landingStatusOf(send({ provider_event: 'bounced' }))).toBe('bounced')
   })
 })
 

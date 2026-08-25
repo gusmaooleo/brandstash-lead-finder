@@ -69,7 +69,7 @@ function rangeQuery(from: Date, to: Date): Record<string, unknown> {
 
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-const SENT_IN = ['sent', 'sent_dry_run']
+const PERFORMANCE_SEND = { status: 'sent', provider_event: { $nin: ['bounced', 'complained'] } }
 
 function buildSendsQuery(q: Record<string, unknown>): Record<string, unknown> {
   const query: Record<string, unknown> = {}
@@ -90,11 +90,11 @@ function buildSendsQuery(q: Record<string, unknown>): Record<string, unknown> {
   // Landing badge filter — mirrors landingStatusOf().
   switch (q.landing) {
     case 'visited':
-      filters.push({ status: { $in: SENT_IN }, 'landing_visit.matched': true })
+      filters.push({ ...PERFORMANCE_SEND, 'landing_visit.matched': true })
       break
     case 'no_visit':
       filters.push({
-        status: { $in: SENT_IN },
+        ...PERFORMANCE_SEND,
         tracking_id_hash: { $type: 'string' },
         'landing_visit.matched': { $ne: true },
       })
@@ -167,7 +167,7 @@ analytics.get('/overview', async (req, res) => {
   const { from, to } = parseRange(req.query as Record<string, unknown>)
   const rows = (await EmailSend.find(rangeQuery(from, to), {
     place_id: 1, status: 1, sent_at: 1, created_at: 1, template_id: 1,
-    variant: 1, followup: 1, attempt: 1, campaign: 1, tracking_id_hash: 1, landing_visit: 1,
+    variant: 1, followup: 1, attempt: 1, campaign: 1, provider_event: 1, tracking_id_hash: 1, landing_visit: 1,
   })
     .sort({ created_at: -1 })
     .limit(OVERVIEW_ROW_CAP)

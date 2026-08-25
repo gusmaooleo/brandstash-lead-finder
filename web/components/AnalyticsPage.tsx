@@ -52,6 +52,8 @@ const LANDING_BADGE: Record<SendLandingStatus, { label: string; cls: string }> =
   untracked: { label: 'Untracked', cls: 'border-line bg-paper-2 text-gray-3' },
   failed: { label: 'Send failed', cls: 'tint-bad' },
   queued: { label: 'Awaiting send', cls: 'tint-warn' },
+  dry_run: { label: 'Dry run', cls: 'border-line bg-paper-2 text-gray-3' },
+  bounced: { label: 'Not delivered', cls: 'tint-bad' },
 }
 
 function LandingBadge({ status }: { status: SendLandingStatus }) {
@@ -362,7 +364,7 @@ export function AnalyticsPage() {
           {/* metric cards */}
           <section className="brand-rise grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <MetricCard label="Emails sent" value={loading && !totals ? '…' : String(totals?.emails_sent ?? 0)}
-              hint={totals ? `${totals.untracked_sends} untracked · ${totals.failed_sends} failed` : undefined} />
+              hint={totals ? `${totals.dry_run_sends} dry runs · ${totals.bounced_sends + totals.complained_sends} rejected` : undefined} />
             <MetricCard label="Sends with visit" value={loading && !totals ? '…' : String(totals?.visited_sends ?? 0)}
               hint="each send counts once" accent />
             <MetricCard label="Landing visit rate" value={loading && !totals ? '…' : fmtPct(totals?.landing_visit_rate ?? 0)} accent />
