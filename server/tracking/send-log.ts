@@ -20,6 +20,7 @@ import { generateRid, hashRid } from './rid'
 import { campaignFor, templateIdFor } from './landing-url'
 import { NoTemplateError } from '../email/sender'
 import { resolveTemplate, type ResolvedTemplate } from '../email/template-store'
+import { searchedCategory } from '../../shared/types'
 
 export type BeginTrackedSendInput = {
   lead: Pick<LeadDoc, 'place_id' | 'name' | 'language' | 'market_scope'> & {
@@ -46,6 +47,7 @@ export function buildSendRecord(
   input: BeginTrackedSendInput,
   trackingIdHash: string,
   templateId?: string,
+  template?: ResolvedTemplate | null,
 ): Record<string, unknown> {
   return {
     place_id: input.lead.place_id,
@@ -54,7 +56,10 @@ export function buildSendRecord(
     language: input.lead.language,
     market_scope: input.lead.market_scope,
     campaign: campaignFor(String(input.lead.market_scope)),
+    search_category: searchedCategory(input.lead),
     template_id: templateId ?? 'unresolved',
+    template_key: template?.id ?? (input.oneOff ? 'one_off' : null),
+    template_name: template?.name ?? (input.oneOff ? 'One-off email' : null),
     variant: null,
     followup: input.followupNumber,
     attempt: input.followupNumber + 1,
@@ -90,7 +95,7 @@ export async function beginTrackedSend(input: BeginTrackedSendInput): Promise<Tr
       })))
   if (!template && !input.oneOff) throw new NoTemplateError(String(input.lead.language ?? 'en'))
   const templateId = template ? templateIdFor(template.id, input.followupNumber) : 'one_off'
-  const record = buildSendRecord(input, hashRid(rid), templateId)
+  const record = buildSendRecord(input, hashRid(rid), templateId, template)
   const doc = await EmailSend.create(record)
   return { rid, sendId: String(doc._id), campaign: String(record.campaign), template }
 }
@@ -108,6 +113,11 @@ export async function completeTrackedSend(sendId: string, outcome: SendOutcome):
         error: outcome.error,
         variant: outcome.subjectVariant,
         template_id: outcome.templateId + variantSuffix,
+        template_key: outcome.templateKey,
+        template_name: outcome.templateName,
+        variant_fingerprint: outcome.variantFingerprint,
+        variant_subject: outcome.subject,
+        variant_band: outcome.variantBand,
       },
     },
   )
@@ -132,6 +142,7 @@ export async function backfillUntrackedSends(
     name: string
     language: string
     market_scope: string
+    discovery?: { query?: string | null; search_category?: string | null } | null
     approved_at?: Date | null
     contact?: { selected_email?: string | null } | null
     delivery?: {
@@ -161,6 +172,9 @@ export async function backfillUntrackedSends(
       language: lead.language,
       market_scope: lead.market_scope,
       campaign: campaignFor(String(lead.market_scope)),
+      search_category: searchedCategory(lead),
+      template_key: 'legacy',
+      template_name: 'Legacy',
       backfilled: true,
       tracking_id_hash: null,
     }

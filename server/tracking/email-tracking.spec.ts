@@ -160,6 +160,21 @@ describe('tracked landing links in outreach emails', () => {
     })
     expect(new Set(ridsIn(email.html))).toEqual(new Set([rid]))
     expect(email.templateId).toBe('one_off')
+    expect(email.templateKey).toBe('one_off')
+    expect(email.variantFingerprint).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('changes the immutable variant fingerprint when the copy changes', () => {
+    const original = renderTracked({ rid: generateRid() })
+    const changed = renderForLead(lead, scoring, summary, 'pt', 'tok', {
+      rid: generateRid(),
+      campaign: campaignFor('portuguese'),
+      template: {
+        ...template,
+        messages: [{ followup: 0, variants: [{ ...variant('initial'), subject: 'new subject' }] }],
+      },
+    })
+    expect(changed.variantFingerprint).not.toBe(original.variantFingerprint)
   })
 
   it('the raw rid never reaches console logs during render or record building', () => {

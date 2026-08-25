@@ -31,6 +31,7 @@ import { createPreviewLandingUrl, createTrackedLandingUrl, templateIdFor } from 
 import type { EmailLanguage } from '../../shared/types'
 import type { PlaceProfileSummary } from '../scoring/types'
 import type { RulesAnalysisResult } from '../scoring/analyze'
+import { variantFingerprint } from '../tracking/experiment'
 
 export async function isSuppressed(email: string): Promise<boolean> {
   return Boolean(await Suppression.exists({ email: email.toLowerCase() }))
@@ -94,6 +95,9 @@ export type RenderedOutreach = {
   templateId: string
   /** Human-readable template name, for the preview UI. */
   templateName: string
+  templateKey: string
+  variantFingerprint: string
+  variantBand: string | null
 }
 
 export type RenderableLead = Pick<
@@ -139,6 +143,10 @@ export function renderForLead(
       )
 
   const templateId = opts.oneOff ? ONE_OFF_ID : templateIdFor(template!.id, followupNumber)
+  const templateKey = opts.oneOff ? ONE_OFF_ID : template!.id
+  const selectedVariant = opts.oneOff
+    ? { ...opts.oneOff, preheader: '', band: null, needs_rating: false }
+    : variants[variant]
 
   // One rid per send: every landing link in this email shares it. A preview
   // gets the same link without the tracking contract (see landing-url.ts).
@@ -164,7 +172,7 @@ export function renderForLead(
   const findings = resolveFindings(template?.findings, profileSummary, variant)
 
   const rendered = renderCustomMessage(
-    opts.oneOff ?? variants[variant],
+    selectedVariant,
     {
       businessName: lead.name,
       city: lead.city_label.split(',')[0].trim(),
@@ -213,6 +221,9 @@ export function renderForLead(
     audience: template?.audience ?? 'custom',
     templateId,
     templateName: opts.oneOff ? 'One-off email' : (template?.name ?? ''),
+    templateKey,
+    variantFingerprint: variantFingerprint({ templateKey, language, followup: followupNumber, variant: selectedVariant }),
+    variantBand: selectedVariant.band ?? null,
   }
 }
 
@@ -227,6 +238,10 @@ export type SendOutcome = {
   unsubscribeToken: string
   audience: string
   templateId: string
+  templateName: string
+  templateKey: string
+  variantFingerprint: string
+  variantBand: string | null
 }
 
 /**
@@ -265,6 +280,10 @@ export async function sendLeadEmail(
     unsubscribeToken: token,
     audience: rendered.audience,
     templateId: rendered.templateId,
+    templateName: rendered.templateName,
+    templateKey: rendered.templateKey,
+    variantFingerprint: rendered.variantFingerprint,
+    variantBand: rendered.variantBand,
   }
 
   if (settings().email.mode === 'dry_run') {

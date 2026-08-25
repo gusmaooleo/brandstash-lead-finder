@@ -39,12 +39,18 @@ const emailSendSchema = new Schema(
     language: { type: String, required: true },
     market_scope: { type: String, required: true },
     campaign: { type: String, required: true, index: true },
+    search_category: { type: String, default: null, index: true },
 
     /** Email type: 'note' | 'dashboard'. */
     /** note / note_followup_1 / note_followup_2 / dashboard (± _vN suffix set on completion). */
     template_id: { type: String, required: true, index: true },
+    template_key: { type: String, default: null, index: true },
+    template_name: { type: String, default: null },
     /** Note variant or dashboard subject variant (0-based); null until rendered. */
     variant: { type: Number, default: null },
+    variant_fingerprint: { type: String, default: null, index: true },
+    variant_subject: { type: String, default: null },
+    variant_band: { type: String, default: null },
     /** 0 = initial, 1 = bump, 2 = breakup. */
     followup: { type: Number, required: true, default: 0 },
     /** 1-based sequence step (followup + 1). */

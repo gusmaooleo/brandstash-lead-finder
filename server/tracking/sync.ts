@@ -75,7 +75,7 @@ export async function syncLandingVisits(
   // Keep legacy (pre-tracking) sends visible before reconciling.
   const legacyCandidates = await Approved.find(
     { $or: [{ 'outreach.count': { $gte: 1 } }, { 'delivery.state': 'failed' }] },
-    { place_id: 1, name: 1, language: 1, market_scope: 1, email_style: 1, approved_at: 1, 'contact.selected_email': 1, delivery: 1, outreach: 1 },
+    { place_id: 1, name: 1, language: 1, market_scope: 1, discovery: 1, email_style: 1, approved_at: 1, 'contact.selected_email': 1, delivery: 1, outreach: 1 },
   ).lean()
   const backfilled = await backfillUntrackedSends(legacyCandidates as never)
 

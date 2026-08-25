@@ -8,6 +8,7 @@ const lead = {
   name: 'Padaria Central',
   language: 'pt',
   market_scope: 'portuguese',
+  discovery: { search_category: 'Bakery' },
 } as never
 
 describe('persisted send record', () => {
@@ -37,6 +38,7 @@ describe('persisted send record', () => {
     expect(record.followup).toBe(2)
     expect(record.attempt).toBe(3)
     expect(record.place_id).toBe('ChIJrecord1')
+    expect(record.search_category).toBe('Bakery')
   })
 
   it('two records for the SAME lead never share a hash', () => {
