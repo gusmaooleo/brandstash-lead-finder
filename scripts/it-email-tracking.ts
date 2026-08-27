@@ -22,9 +22,14 @@ import { overviewMetrics, type SendRow } from '../server/tracking/metrics'
 import { analyzePlaceProfile } from '../server/scoring/analyze'
 import type { PlaceProfileSummary } from '../server/scoring/types'
 import type { LeadDoc } from '../server/leads/models'
-import { loadSettings, settings, updateSettings } from '../server/settings/settings'
+import { loadSettings, setSettingsForTests, settings, updateSettings } from '../server/settings/settings'
 import { invalidateTemplates, resolveTemplate } from '../server/email/template-store'
 import { EmailTemplate } from '../server/email/template-models'
+import { replyAddressForRid } from '../server/email/reply-address'
+import { syncInboundReplies, type ReceivedEmailDetail } from '../server/replies/resend'
+import { InboundReply } from '../server/replies/models'
+import { refreshReplySummary } from '../server/replies/store'
+import { generateRid } from '../server/tracking/rid'
 
 const summary: PlaceProfileSummary = {
   name: 'Padaria IT Central', address: 'Rua Teste, 1', phone: '+55 71 3333-3333',
@@ -49,6 +54,14 @@ async function main() {
     // Tracked links point at the operator's own site; with none configured an
     // email ships without a landing link at all.
     offer: { site_url: 'https://acme.example', brand_name: 'Acme' },
+  })
+  setSettingsForTests({
+    replies: {
+      enabled: true,
+      receivingDomain: 'replies.brandstash.test',
+      localPart: 'reply',
+      resendKey: 're_test_only',
+    },
   })
   // A library with one template: this run sends what a real install sends.
   await EmailTemplate.create({
@@ -170,12 +183,97 @@ async function main() {
   assert.equal(after3!.landing_visit.first_observed_at!.toISOString(), '2026-08-17T10:00:00.000Z')
   assert.equal(after3!.landing_visit.last_observed_at!.toISOString(), '2026-08-17T11:40:00.000Z')
 
+  const replyOne = replyAddressForRid(t1.rid)
+  const replyTwo = replyAddressForRid(t2.rid)
+  assert.ok(replyOne?.includes(t1.rid.toLowerCase()))
+  assert.ok(replyTwo?.includes(t2.rid.toLowerCase()))
+  const orphanAddress = `reply-${generateRid().toLowerCase()}@replies.brandstash.test`
+  const receivedAt = new Date(Date.now() + 30 * 60_000)
+  const incoming: ReceivedEmailDetail[] = [
+    {
+      id: 'received-human-1',
+      to: [replyOne!],
+      from: 'Marina <marina@padaria-it.example>',
+      created_at: receivedAt.toISOString(),
+      subject: 'Re: passo 0 — Padaria IT Central',
+      message_id: '<received-human-1@example>',
+      text: 'Oi! Gostei da ideia. Podemos conversar amanhã?\n\nOn Monday you wrote:\n> mensagem anterior',
+      headers: { 'In-Reply-To': doc1!.message_id ?? '' },
+    },
+    {
+      id: 'received-automatic-1',
+      to: [replyTwo!],
+      from: 'contato@padaria-it.example',
+      created_at: new Date(receivedAt.getTime() + 60_000).toISOString(),
+      subject: 'Resposta automática: passo 1',
+      message_id: '<received-automatic-1@example>',
+      text: 'Recebemos sua mensagem.',
+      headers: { 'Auto-Submitted': 'auto-replied' },
+    },
+    {
+      id: 'received-orphan-1',
+      to: [orphanAddress],
+      from: 'owner@unknown.example',
+      created_at: new Date(receivedAt.getTime() + 120_000).toISOString(),
+      subject: 'Re: contato',
+      message_id: '<received-orphan-1@example>',
+      text: 'Quero saber mais.',
+      headers: {},
+    },
+  ]
+  const replyFetch: typeof fetch = async (input) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    const id = url.pathname.split('/').at(-1)
+    const payload = id === 'receiving'
+      ? {
+          data: incoming.map(({ text: _text, html: _html, headers: _headers, ...item }) => item),
+          has_more: false,
+        }
+      : incoming.find((item) => item.id === id)
+    return new Response(JSON.stringify(payload ?? { message: 'not found' }), {
+      status: payload ? 200 : 404,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  const replySync = await syncInboundReplies(replyFetch, new Date(receivedAt.getTime() + 5 * 60_000))
+  assert.equal(replySync.ok, true)
+  assert.equal(replySync.created, 3)
+  assert.equal(replySync.human, 2)
+  assert.equal(replySync.automatic, 1)
+  assert.equal(replySync.unattributed, 1)
+  const exactHuman = await InboundReply.findOne({ provider_email_id: 'received-human-1' }).lean()
+  const exactAutomatic = await InboundReply.findOne({ provider_email_id: 'received-automatic-1' }).lean()
+  const orphan = await InboundReply.findOne({ provider_email_id: 'received-orphan-1' }).lean()
+  assert.equal(String(exactHuman!.email_send_id), t1.sendId)
+  assert.equal(String(exactAutomatic!.email_send_id), t2.sendId)
+  assert.equal(orphan!.email_send_id, null)
+  assert.equal(orphan!.correlation, 'unattributed')
+  assert.equal(exactHuman!.preview, 'Oi! Gostei da ideia. Podemos conversar amanhã?')
+  const withHumanReply = await EmailSend.findById(t1.sendId).lean()
+  const withAutomaticReply = await EmailSend.findById(t2.sendId).lean()
+  assert.equal(withHumanReply!.reply_summary.matched, true)
+  assert.equal(withHumanReply!.reply_summary.event_count, 1)
+  assert.equal(withHumanReply!.reply_summary.unread_count, 1)
+  assert.equal(withAutomaticReply!.reply_summary.matched, false)
+  assert.equal(withAutomaticReply!.reply_summary.automatic_count, 1)
+  const repeatedReplySync = await syncInboundReplies(replyFetch, new Date(receivedAt.getTime() + 10 * 60_000))
+  assert.equal(repeatedReplySync.created, 0)
+  assert.equal(await InboundReply.countDocuments(), 3)
+  await InboundReply.updateOne({ _id: exactHuman!._id }, { $set: { read_at: new Date() } })
+  await refreshReplySummary(t1.sendId)
+  assert.equal((await EmailSend.findById(t1.sendId).lean())!.reply_summary.unread_count, 0)
+  await EmailSend.updateMany({ _id: { $in: [t1.sendId, t2.sendId] } }, { $set: { status: 'sent' } })
+  console.log('[it] replies: exact send attribution, classification, idempotency and read state ✓')
+
   /* dashboard math on the real rows */
   const rows = (await EmailSend.find().lean()) as unknown as SendRow[]
   const m = overviewMetrics(rows)
   assert.equal(m.emails_sent, 3) // send1 + send2 + backfilled legacy
   assert.equal(m.visited_sends, 1) // one send visited, despite 2 events
   assert.equal(m.consented_sessions, 2)
+  assert.equal(m.replied_sends, 1)
+  assert.equal(m.human_replies, 1)
   assert.equal(m.unique_visited_leads, 1)
   assert.equal(m.untracked_sends, 1)
   console.log('[it] metrics: visited=1, sessions=2, untracked=1 ✓')
